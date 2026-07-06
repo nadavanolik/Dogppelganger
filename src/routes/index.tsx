@@ -186,9 +186,13 @@ function SignedInHome() {
           ) : (
             <div className="grid grid-cols-3 gap-2">
               {galleryStrip.map((m) => (
-                <div key={m.id} className={`aspect-square rounded-xl border-2 border-[var(--ink)] bg-gradient-to-br ${m.breedBg} flex flex-col items-center justify-center text-center p-1`}>
-                  <span className="text-4xl">{m.breedEmoji}</span>
-                  <span className="text-[10px] font-bold mt-1 truncate w-full">{m.breedName}</span>
+                <div key={m.id} className={`aspect-square rounded-xl border-2 border-[var(--ink)] bg-gradient-to-br ${m.breedBg} flex flex-col items-center justify-center text-center p-1 relative overflow-hidden`}>
+                  {m.breedImage ? (
+                    <img src={m.breedImage} alt={m.breedName} className="absolute inset-0 w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-4xl">{m.breedEmoji}</span>
+                  )}
+                  <span className="text-[10px] font-bold mt-1 truncate w-full z-10 bg-card/80 rounded px-1">{m.breedName}</span>
                 </div>
               ))}
             </div>

@@ -1,3 +1,5 @@
+import dogImages from "./dogImages.json";
+
 export const BREEDS = [
   { name: "Golden Retriever", emoji: "🐕", bg: "from-amber-200 to-orange-300", trait: "sunny optimist" },
   { name: "Corgi", emoji: "🐶", bg: "from-orange-200 to-rose-300", trait: "short kingdom, big attitude" },
@@ -13,13 +15,18 @@ export const BREEDS = [
   { name: "Great Dane", emoji: "🐴", bg: "from-indigo-100 to-blue-300", trait: "horse in denial" },
 ];
 
-export type Breed = (typeof BREEDS)[number];
+export type Breed = (typeof BREEDS)[number] & { image?: string };
 
 export function randomBreed(seed?: string): Breed {
-  if (!seed) return BREEDS[Math.floor(Math.random() * BREEDS.length)];
   let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return BREEDS[h % BREEDS.length];
+  if (seed) {
+    for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  } else {
+    h = Math.floor(Math.random() * 1000000);
+  }
+  const base = BREEDS[h % BREEDS.length];
+  const image = dogImages.length > 0 ? `/dogs/${dogImages[h % dogImages.length]}` : undefined;
+  return { ...base, image };
 }
 
 export const SAMPLE_HUMANS = ["😀", "🧑", "👩", "🧔", "👨‍🦰", "👩‍🦱", "🧑‍🎤", "👵", "🧑‍🚀", "👩‍🌾"];

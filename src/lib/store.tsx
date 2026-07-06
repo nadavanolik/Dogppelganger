@@ -11,6 +11,7 @@ export type DogMatch = {
   humanImg: string; // dataURL or emoji
   breedName: string;
   breedEmoji: string;
+  breedImage?: string;
   breedBg: string;
   trait: string;
   status: MatchStatus;
@@ -75,6 +76,7 @@ function seed(): State {
       humanImg: ["😀", "🧔", "👩‍🦱"][i],
       breedName: b.name,
       breedEmoji: b.emoji,
+      breedImage: b.image,
       breedBg: b.bg,
       trait: b.trait,
       status: "done",
@@ -226,6 +228,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           humanImg,
           breedName: b.name,
           breedEmoji: b.emoji,
+          breedImage: b.image,
           breedBg: b.bg,
           trait: b.trait,
           status: "queued",

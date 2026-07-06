@@ -58,7 +58,6 @@ function Inner() {
       <section>
         <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
           <h2 className="font-display text-3xl font-black">My dogs</h2>
-          <Link to="/upload" className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-2 text-sm">＋ New match</Link>
         </div>
 
         <div className="flex gap-2 mb-4 flex-wrap">

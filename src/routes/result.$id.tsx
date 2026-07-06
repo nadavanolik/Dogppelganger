@@ -24,7 +24,7 @@ function Result() {
             <div className="text-7xl animate-bounce">🐕</div>
             <div className="mt-4 font-display text-3xl font-black">{m.status === "queued" ? "In the queue…" : "Dogifying…"}</div>
             <p className="text-muted-foreground mt-1">{m.urgent ? "🚨 Urgent priority — coming right up." : "We'll ping you when it's ready."}</p>
-            <Link to="/dashboard" className="btn-pop btn-pop-hover bg-primary text-primary-foreground inline-block mt-6 px-5 py-2">See queue</Link>
+            <Link to="/" className="btn-pop btn-pop-hover bg-primary text-primary-foreground inline-block mt-6 px-5 py-2">See queue</Link>
           </div>
         ) : (
           <>
@@ -36,7 +36,13 @@ function Result() {
             <div className="mt-8 flex items-center justify-center gap-6">
               <HumanAvatar src={m.humanImg} size={144} />
               <div className="text-5xl">→</div>
-              <div className={`h-36 w-36 rounded-2xl border-2 border-[var(--ink)] bg-gradient-to-br ${m.breedBg} flex items-center justify-center text-8xl`}>{m.breedEmoji}</div>
+              <div className={`h-36 w-36 rounded-2xl border-2 border-[var(--ink)] bg-gradient-to-br ${m.breedBg} flex items-center justify-center text-8xl relative overflow-hidden`}>
+                {m.breedImage ? (
+                  <img src={m.breedImage} alt={m.breedName} className="w-full h-full object-cover" />
+                ) : (
+                  m.breedEmoji
+                )}
+              </div>
             </div>
             <div className="mt-8 flex flex-wrap gap-3 justify-center">
               {!m.shared ? (
