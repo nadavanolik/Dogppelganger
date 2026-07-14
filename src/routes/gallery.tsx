@@ -1,17 +1,16 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { DogCard } from "@/components/DogCard";
-import { BREEDS } from "@/lib/mock";
+import { isPhoto, isKnownDogImage } from "@/lib/mock";
 import { useStore } from "@/lib/store";
+import type { DogMatch } from "@/lib/store";
 
 export const Route = createFileRoute("/gallery")({ component: Gallery });
 
 function Gallery() {
   const { state } = useStore();
-  const [breed, setBreed] = useState<string>("all");
-  const all = state.matches.filter((m) => m.shared && m.status === "done");
-  const filtered = useMemo(() => (breed === "all" ? all : all.filter((m) => m.breedName === breed)), [all, breed]);
+  // Only show shared matches whose dog picture is a real file in public/dogs — drop any card
+  // pointing at a deleted or renamed image.
+  const shared = state.matches.filter((m) => m.shared && m.status === "done" && isKnownDogImage(m.breedImage));
 
   return (
     <AppShell>
@@ -20,20 +19,9 @@ function Gallery() {
           <h1 className="font-display text-5xl font-black">Public gallery</h1>
           <p className="text-muted-foreground mt-1">Every match shared by the pack. Feeds the multiplayer game.</p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <FilterChip active={breed === "all"} onClick={() => setBreed("all")}>All ({all.length})</FilterChip>
-          {BREEDS.map((b) => {
-            const count = all.filter((m) => m.breedName === b.name).length;
-            if (count === 0) return null;
-            return (
-              <FilterChip key={b.name} active={breed === b.name} onClick={() => setBreed(b.name)}>
-                {b.emoji} {b.name}
-              </FilterChip>
-            );
-          })}
-        </div>
+        <div className="text-sm font-bold text-muted-foreground">{shared.length} shared</div>
       </div>
-      {filtered.length === 0 ? (
+      {shared.length === 0 ? (
         <div className="card-pop p-10 text-center mt-8">
           <div className="text-6xl">🦴</div>
           <div className="font-display text-2xl font-bold mt-2">No shared matches yet</div>
@@ -41,13 +29,34 @@ function Gallery() {
         </div>
       ) : (
         <div className="mt-6 grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {filtered.map((m) => <DogCard key={m.id} match={m} />)}
+          {shared.map((m) => <MatchCard key={m.id} match={m} />)}
         </div>
       )}
     </AppShell>
   );
 }
 
-function FilterChip({ active, ...p }: { active: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...p} className={`btn-pop btn-pop-hover px-3 py-1.5 text-sm ${active ? "bg-primary text-primary-foreground" : "bg-card"}`} />;
+// Gallery card: human photo and dog photo side by side (same match, same number). No breed name.
+function MatchCard({ match }: { match: DogMatch }) {
+  return (
+    <div className="card-pop-sm overflow-hidden">
+      <div className="grid grid-cols-2">
+        <Face src={match.humanImg} fallback="🧑" />
+        <Face src={match.breedImage ?? match.breedEmoji} fallback={match.breedEmoji} bg={match.breedBg} />
+      </div>
+      <div className="p-3 text-xs text-muted-foreground">@{match.username}</div>
+    </div>
+  );
+}
+
+function Face({ src, fallback, bg }: { src: string; fallback: string; bg?: string }) {
+  return (
+    <div className={`h-40 flex items-center justify-center overflow-hidden ${bg ? `bg-gradient-to-br ${bg}` : "bg-muted"}`}>
+      {isPhoto(src) ? (
+        <img src={src} alt="" className="w-full h-full object-cover" />
+      ) : (
+        <span className="text-6xl">{src || fallback}</span>
+      )}
+    </div>
+  );
 }

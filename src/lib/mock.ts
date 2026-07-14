@@ -1,4 +1,5 @@
 import dogImages from "./dogImages.json";
+import humanImages from "./humanImages.json";
 
 export const BREEDS = [
   { name: "Golden Retriever", emoji: "🐕", bg: "from-amber-200 to-orange-300", trait: "sunny optimist" },
@@ -28,6 +29,71 @@ export function randomBreed(seed?: string): Breed {
   const image = dogImages.length > 0 ? `/dogs/${dogImages[h % dogImages.length]}` : undefined;
   return { ...base, image };
 }
+
+// Deterministic real-photo path for a given index; undefined when no files are in public/dogs/
+// (so callers fall back to the breed emoji). Run `npm run dogs` after adding photos.
+export function dogImageAt(i: number): string | undefined {
+  return dogImages.length > 0 ? `/dogs/${dogImages[Math.abs(i) % dogImages.length]}` : undefined;
+}
+
+// Deterministic real human-photo path for a given index; undefined when no files are in
+// public/humans/ (so callers fall back to an emoji). Run `npm run images` after adding photos.
+export function humanImageAt(i: number): string | undefined {
+  return humanImages.length > 0 ? `/humans/${humanImages[Math.abs(i) % humanImages.length]}` : undefined;
+}
+
+// True when a humanImg/avatar value is a real image reference (uploaded data URL, remote URL, or
+// a file served from public/) rather than an emoji. The single source of truth for the img-vs-emoji
+// decision across DogCard, HumanAvatar, game, lobbies and home.
+export function isPhoto(src: string): boolean {
+  return src.startsWith("data:") || src.startsWith("http") || src.startsWith("/");
+}
+
+// First integer found in a filename, e.g. "human2.png" -> 2, "dog1 2.jpg" -> 1. null if none.
+function fileNumber(name: string): number | null {
+  const m = name.match(/(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// A human photo and a dog photo that share the same number (human2.png ↔ dog2.png), so a match can
+// show the same person with their assigned dog. Built from the public/humans and public/dogs folders.
+export type PhotoPair = { n: number; human: string; dog: string };
+
+// Every dog image path that actually exists in public/dogs (per the generated manifest).
+const DOG_IMAGE_SET = new Set(dogImages.map((d) => `/dogs/${d}`));
+
+// True when a match's dog picture is a real file in public/dogs. Undefined breedImage counts as ok
+// (that match falls back to a breed emoji, so there is no broken photo). Used to prune the gallery
+// of cards whose dog file has been deleted or renamed.
+export function isKnownDogImage(breedImage?: string): boolean {
+  return !breedImage || DOG_IMAGE_SET.has(breedImage);
+}
+
+// The single dog every freshly uploaded human is matched to. Change UPLOAD_DOG_FILE to point new
+// uploads at a different photo; falls back to any dog numbered 3, then undefined (breed emoji).
+const UPLOAD_DOG_FILE = "dog3.jpeg";
+export const UPLOAD_DOG_SRC: string | undefined = dogImages.includes(UPLOAD_DOG_FILE)
+  ? `/dogs/${UPLOAD_DOG_FILE}`
+  : (() => {
+      const byNum = dogImages.find((d) => fileNumber(d) === 3);
+      return byNum ? `/dogs/${byNum}` : undefined;
+    })();
+
+export const PHOTO_PAIRS: PhotoPair[] = (() => {
+  const dogsByNum = new Map<number, string>();
+  for (const d of dogImages) {
+    const n = fileNumber(d);
+    if (n != null && !dogsByNum.has(n)) dogsByNum.set(n, `/dogs/${d}`);
+  }
+  const pairs: PhotoPair[] = [];
+  for (const h of humanImages) {
+    const n = fileNumber(h);
+    if (n != null && dogsByNum.has(n)) {
+      pairs.push({ n, human: `/humans/${h}`, dog: dogsByNum.get(n)! });
+    }
+  }
+  return pairs.sort((a, b) => a.n - b.n);
+})();
 
 export const SAMPLE_HUMANS = ["😀", "🧑", "👩", "🧔", "👨‍🦰", "👩‍🦱", "🧑‍🎤", "👵", "🧑‍🚀", "👩‍🌾"];
 

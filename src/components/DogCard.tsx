@@ -1,4 +1,5 @@
 import type { DogMatch } from "@/lib/store";
+import { isPhoto } from "@/lib/mock";
 
 export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" | "md" | "lg" }) {
   const dim = size === "sm" ? "h-32" : size === "lg" ? "h-72" : "h-52";
@@ -14,7 +15,11 @@ export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" |
       </div>
       <div className="p-3">
         <div className="flex items-center gap-2">
-          <span className="text-2xl">{match.humanImg.length <= 4 ? match.humanImg : "🧑"}</span>
+          {isPhoto(match.humanImg) ? (
+            <img src={match.humanImg} alt="" className="h-7 w-7 rounded-full border border-[var(--ink)] object-cover" />
+          ) : (
+            <span className="text-2xl">{match.humanImg}</span>
+          )}
           <span className="text-xl">→</span>
           <span className="text-2xl">{match.breedEmoji}</span>
         </div>
@@ -27,7 +32,7 @@ export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" |
 }
 
 export function HumanAvatar({ src, size = 64 }: { src: string; size?: number }) {
-  if (src.startsWith("data:") || src.startsWith("http")) {
+  if (isPhoto(src)) {
     return (
       <img
         src={src}

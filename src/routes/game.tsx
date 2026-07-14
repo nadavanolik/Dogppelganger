@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { BREEDS } from "@/lib/mock";
+import { BREEDS, isPhoto } from "@/lib/mock";
 import { useStore, type DogMatch } from "@/lib/store";
 
 export const Route = createFileRoute("/game")({ component: Game });
@@ -47,7 +47,7 @@ function Game() {
         <div className="card-pop p-8">
           <div className="text-sm font-bold text-muted-foreground text-center">This human is a…?</div>
           <div className="mt-4 flex justify-center">
-            {target.humanImg.startsWith("data:") ? (
+            {isPhoto(target.humanImg) ? (
               <img src={target.humanImg} alt="" className="h-56 w-56 object-cover rounded-2xl border-2 border-[var(--ink)]" />
             ) : (
               <div className="h-56 w-56 rounded-2xl border-2 border-[var(--ink)] bg-sky flex items-center justify-center text-8xl">{target.humanImg}</div>

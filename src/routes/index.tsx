@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
 import { useStore } from "@/lib/store";
+import { isPhoto } from "@/lib/mock";
 
 export const Route = createFileRoute("/")({ component: Index });
 
@@ -137,7 +138,11 @@ function SignedInHome() {
           <ul className="mt-3 space-y-2">
             {queue.map((m) => (
               <li key={m.id} className="flex items-center gap-3 p-2 rounded-xl bg-muted border-2 border-[var(--ink)]">
-                <div className="text-2xl">{m.humanImg.length <= 4 ? m.humanImg : "🧑"}</div>
+                {isPhoto(m.humanImg) ? (
+                  <img src={m.humanImg} alt="" className="h-8 w-8 rounded-full border border-[var(--ink)] object-cover" />
+                ) : (
+                  <div className="text-2xl">{m.humanImg}</div>
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold">{m.urgent ? "🚨 Urgent" : "In queue"} · {m.status}</div>
                   <div className="h-1.5 rounded-full bg-card border border-[var(--ink)] mt-1 overflow-hidden">

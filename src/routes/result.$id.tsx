@@ -29,8 +29,8 @@ function Result() {
         ) : (
           <>
             <div className="text-center">
-              <div className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Your dogppleganger is…</div>
-              <h1 className="font-display text-5xl md:text-6xl font-black mt-1">{m.breedName}</h1>
+              <div className="text-sm font-bold text-muted-foreground uppercase tracking-wide">Your dogpelganger is ready</div>
+              <h1 className="font-display text-5xl md:text-6xl font-black mt-1">You've been dogified! 🐶</h1>
               <p className="italic text-muted-foreground mt-1">{m.trait}</p>
             </div>
             <div className="mt-8 flex items-center justify-center gap-6">
@@ -51,7 +51,7 @@ function Result() {
                 <span className="btn-pop bg-mint px-5 py-2">✅ Shared</span>
               )}
               <a
-                href={`data:text/plain,${encodeURIComponent(`I am a ${m.breedName} — ${m.trait} · via dogppleganger`)}`}
+                href={`data:text/plain,${encodeURIComponent(`I am a ${m.breedName} — ${m.trait} · via dogpelganger`)}`}
                 download={`${m.breedName}.txt`}
                 className="btn-pop btn-pop-hover bg-card px-5 py-2"
               >⬇️ Download</a>
