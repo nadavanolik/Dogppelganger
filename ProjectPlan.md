@@ -1,4 +1,4 @@
-# Dogpelganger — Technical Specification
+# Dogppelganger — Technical Specification
 
 **Team:** Nadav Anolik, Ilona Grayfer, Michal Kfir
 **Scope of this document:** every page in the web app — its purpose, UI components, the data and API it uses, real-time channels, states, and access rules — plus how the user navigates from any page to any other.

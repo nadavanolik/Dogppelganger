@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { BREEDS, randomBreed, dogImageAt, humanImageAt, PHOTO_PAIRS, UPLOAD_DOG_SRC, SAMPLE_POSTS } from "./mock";
+import { BREEDS, randomBreed, SAMPLE_POSTS } from "./mock";
 
 export type User = { id: string; username: string; email: string };
 
@@ -59,7 +59,7 @@ type State = {
   notifications: Notification[];
 };
 
-const KEY = "dogpelganger_v3";
+const KEY = "dogppleganger_v1";
 
 function seed(): State {
   const users: User[] = [
@@ -67,20 +67,16 @@ function seed(): State {
     { id: "u_corgi_core", username: "corgi_core", email: "corgi@dog.dog" },
     { id: "u_hufflepupp", username: "hufflepupp", email: "huff@dog.dog" },
   ];
-  // One sample match per human↔dog pair (same number), so the gallery shows real, aligned photos.
-  // Falls back to unpaired index-based art when the folders are empty.
-  const basis = PHOTO_PAIRS.length > 0 ? PHOTO_PAIRS : [null, null, null];
-  const sampleMatches: DogMatch[] = basis.map((pair, i) => {
-    const u = users[i % users.length];
+  const sampleMatches: DogMatch[] = users.map((u, i) => {
     const b = BREEDS[(i * 3) % BREEDS.length];
     return {
       id: "m_seed_" + i,
       userId: u.id,
       username: u.username,
-      humanImg: pair ? pair.human : humanImageAt(i) ?? ["😀", "🧔", "👩‍🦱"][i] ?? "🧑",
+      humanImg: ["😀", "🧔", "👩‍🦱"][i],
       breedName: b.name,
       breedEmoji: b.emoji,
-      breedImage: pair ? pair.dog : dogImageAt(i),
+      breedImage: b.image,
       breedBg: b.bg,
       trait: b.trait,
       status: "done",
@@ -232,7 +228,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           humanImg,
           breedName: b.name,
           breedEmoji: b.emoji,
-          breedImage: UPLOAD_DOG_SRC ?? b.image,
+          breedImage: b.image,
           breedBg: b.bg,
           trait: b.trait,
           status: "queued",

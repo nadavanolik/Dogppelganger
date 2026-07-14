@@ -61,9 +61,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "dogpelganger — find the dog you already are" },
+      { title: "dogppleganger — find the dog you already are" },
       { name: "description", content: "Upload a photo, get the dog you'd be. Share it, chat with fellow pups, and play match games with the community." },
-      { property: "og:title", content: "dogpelganger — find the dog you already are" },
+      { property: "og:title", content: "dogppleganger — find the dog you already are" },
       { property: "og:description", content: "Human → dog matching, a shared gallery, forums, DMs and multiplayer games. Pure playful chaos." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
-import { BREEDS, isPhoto } from "@/lib/mock";
+import { BREEDS } from "@/lib/mock";
 import { useStore } from "@/lib/store";
 
 export const Route = createFileRoute("/lobbies/$id")({ component: Room });
@@ -53,7 +53,7 @@ function Inner() {
           <div className="mt-6">
             <div className="text-sm font-bold text-muted-foreground text-center">Everyone sees the same photo. Pick the breed.</div>
             <div className="flex justify-center mt-3">
-              {isPhoto(match.humanImg) ? (
+              {match.humanImg.startsWith("data:") ? (
                 <img src={match.humanImg} className="h-56 w-56 rounded-2xl border-2 border-[var(--ink)] object-cover" alt="" />
               ) : (
                 <div className="h-56 w-56 rounded-2xl border-2 border-[var(--ink)] bg-sky flex items-center justify-center text-8xl">{match.humanImg}</div>

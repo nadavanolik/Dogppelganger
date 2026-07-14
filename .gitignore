@@ -31,5 +31,4 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local backup of the original 5k-image manifest (regenerate with npm run images)
-/scripts/dogImages.reference.json
+/public/dogs/

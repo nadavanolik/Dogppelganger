@@ -26,7 +26,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0">
             <div className="h-10 w-10 rounded-full bg-primary border-2 border-[var(--ink)] flex items-center justify-center text-xl shadow-pop-sm">🐶</div>
-            <span className="font-display text-2xl font-black tracking-tight hidden sm:inline">dogpelganger</span>
+            <span className="font-display text-2xl font-black tracking-tight hidden sm:inline">dogppleganger</span>
           </Link>
 
           {me && (
@@ -151,7 +151,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8">{children}</main>
       <footer className="border-t-2 border-[var(--ink)] py-6 text-center text-sm text-muted-foreground">
-        Made with 🐾 · dogpelganger prototype
+        Made with 🐾 · dogppleganger prototype
       </footer>
     </div>
   );
