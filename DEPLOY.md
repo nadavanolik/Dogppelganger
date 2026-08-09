@@ -29,31 +29,46 @@ pulls prebuilt images, so it stays fast even if it's a small machine.
 
 You only do this once, after your teacher gives you VM access.
 
-### 1. Generate a **deploy key** for GitHub → VM
+### 1. The SSH key for GitHub → VM
 
-Your personal SSH key lets *you* log into the VM. GitHub Actions needs its
-**own** key. On your laptop:
+GitHub Actions logs into the VM over SSH, so it needs a private key that the VM
+trusts.
+
+- **If you already have a key dedicated to this VM** (public key handed to whoever
+  provisioned the VM): reuse it. Its **private** key goes into a GitHub secret in
+  step 4 — nothing else to generate.
+- **Otherwise**, make one and put its public half on the VM:
+
+  ```bash
+  ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/dogppelganger_deploy
+  cat ~/.ssh/dogppelganger_deploy.pub   # append this to the VM's ~/.ssh/authorized_keys
+  ```
+
+> The private key must be in **OpenSSH format** (starts with
+> `-----BEGIN OPENSSH PRIVATE KEY-----`). If yours is a PuTTY `.ppk`, export it as
+> OpenSSH first (PuTTYgen → Conversions → Export OpenSSH key).
+
+### 2. Open port 80 (Azure)
+
+Azure VMs allow only SSH (22) inbound by default, so the site would be
+unreachable on port 80. In the Azure Portal:
+
+**VM → Networking → Network settings → Add inbound port rule** → Destination port
+`80`, Protocol TCP, Action Allow. (Add `443` too if you set up HTTPS later.)
+
+### 3. Prepare the VM
+
+SSH into the VM with your key and run:
 
 ```bash
-ssh-keygen -t ed25519 -C "github-actions-deploy" -f ~/.ssh/dogppelganger_deploy
-```
+ssh -i /path/to/your_private_key <vm-user>@<vm-public-ip>
 
-This makes two files:
-
-- `dogppelganger_deploy` (private) → goes into a GitHub secret
-- `dogppelganger_deploy.pub` (public) → goes onto the VM
-
-### 2. Prepare the VM
-
-SSH into the VM (with your personal key) and run:
-
-```bash
 # Install Docker + compose plugin (Ubuntu/Debian)
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER      # then log out & back in
 
-# Let the GitHub deploy key log in
-cat >> ~/.ssh/authorized_keys      # paste the CONTENTS of dogppelganger_deploy.pub, then Ctrl-D
+# If you generated a SEPARATE deploy key, add its public half now:
+# cat >> ~/.ssh/authorized_keys    # paste dogppelganger_deploy.pub, then Ctrl-D
 
 # Clone the repo (public repo → no auth needed)
 git clone https://github.com/nadavanolik/Dogppelganger.git ~/dogppelganger
@@ -64,7 +79,7 @@ cp .env.example .env
 nano .env    # set SECRET_KEY + a real POSTGRES_PASSWORD
 ```
 
-### 3. Make the GHCR images pullable
+### 4. Make the GHCR images pullable
 
 The simplest option for a student project: after the **first** successful
 deploy, open each package at
@@ -75,15 +90,15 @@ deploy, open each package at
 > Private alternative: run `docker login ghcr.io` on the VM with a Personal
 > Access Token that has `read:packages`, and add that step to the deploy script.
 
-### 4. Add the GitHub repository secrets
+### 5. Add the GitHub repository secrets
 
 Repo → **Settings → Secrets and variables → Actions → New repository secret**:
 
-| Secret            | Value                                                        |
-| ----------------- | ----------------------------------------------------------- |
-| `SSH_HOST`        | the VM's IP or hostname                                      |
-| `SSH_USER`        | your VM username (e.g. `ubuntu`)                            |
-| `SSH_PRIVATE_KEY` | the **entire** contents of `~/.ssh/dogppelganger_deploy`    |
+| Secret            | Value                                                          |
+| ----------------- | -------------------------------------------------------------- |
+| `SSH_HOST`        | the VM's **public IP** (Azure Portal → VM overview)            |
+| `SSH_USER`        | the VM admin username you set when creating it (e.g. `azureuser`) |
+| `SSH_PRIVATE_KEY` | the **entire** contents of your private key file, incl. the header/footer lines |
 
 `GITHUB_TOKEN` (used to push images to GHCR) is provided automatically — you
 don't create it.
