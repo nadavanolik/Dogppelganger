@@ -37,7 +37,7 @@ jobs:
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/dogppelganger-site:latest
 
-      - name: Build & push model (Flask API)
+      - name: Build & push model (FastAPI)
         uses: docker/build-push-action@v6
         with:
           context: ./backend

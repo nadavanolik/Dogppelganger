@@ -1,4 +1,4 @@
-# Three containers: site (nginx + React SPA), model (Flask API), db (Postgres).
+# Three containers: site (nginx + React SPA), model (FastAPI), db (Postgres).
 #
 # Local:  docker compose up --build
 # On VM:  docker compose pull && docker compose up -d   (uses prebuilt GHCR images)

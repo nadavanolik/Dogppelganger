@@ -9,5 +9,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 5000
-# 2 gunicorn workers serving the Flask app factory (main.py exposes `app`).
-CMD ["gunicorn", "-w", "2", "-b", "0.0.0.0:5000", "main:app"]
+# Single worker on purpose: the WebSocket connection registry is in-memory,
+# so all live sockets must live in one process (scale later via Redis pub/sub).
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]

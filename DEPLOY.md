@@ -1,7 +1,7 @@
 # Deployment (CI/CD)
 
 This project ships as **three containers** — `site` (React SPA + nginx),
-`model` (Flask API), and `db` (Postgres) — wired together by
+`model` (FastAPI), and `db` (Postgres) — wired together by
 `docker-compose.yml`.
 
 ## How the pipeline works
@@ -143,7 +143,7 @@ docker compose up --build
 **Frontend and backend separately (fastest for development):**
 
 ```bash
-# terminal 1 — Flask API on :5000 (uses a local SQLite file, no Postgres needed)
+# terminal 1 — FastAPI on :5000 (uses a local SQLite file, no Postgres needed)
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
@@ -158,7 +158,7 @@ npm run dev
 
 ## Notes / future work
 
-- `backend/website/model.py` is a **placeholder** matcher. Swap `predict_breed`
+- `backend/app/model.py` is a **placeholder** matcher. Swap `predict_breed`
   for the real ML model — the API contract in `views.py` won't change.
 - HTTPS: put a real domain + TLS (e.g. Caddy or nginx + certbot) in front later.
   For now the site is served over plain HTTP on port 80.

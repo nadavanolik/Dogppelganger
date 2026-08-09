@@ -1,8 +1,8 @@
 """The dog-matching 'model'.
 
 Right now this is a deterministic placeholder so the whole stack works
-end-to-end. Swap `predict_breed` for the real ML inference later — the API
-in views.py won't need to change.
+end-to-end. Swap `predict_breed` for the real ML inference later — the routes
+in routers/views.py won't need to change.
 """
 import hashlib
 
@@ -27,7 +27,6 @@ def predict_breed(image: str | None = None) -> dict:
     digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     index = int(digest, 16) % len(BREEDS)
     breed = BREEDS[index]
-    # Fake-but-stable confidence in the 0.70–0.99 range.
     confidence = 0.70 + (int(digest[:4], 16) % 30) / 100
     return {
         "breedName": breed["name"],

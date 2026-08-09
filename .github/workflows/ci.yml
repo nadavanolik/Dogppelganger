@@ -35,4 +35,4 @@ jobs:
 
       - run: pip install -r backend/requirements.txt
       - name: Byte-compile (syntax check)
-        run: python -m py_compile backend/main.py backend/website/*.py
+        run: python -m compileall backend/main.py backend/app

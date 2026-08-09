@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), tsConfigPaths()],
   server: {
     port: 5173,
-    // Forward API calls to the Flask backend during local development so the
+    // Forward API calls to the FastAPI backend during local development so the
     // browser sees a single origin (mirrors what nginx does in production).
     proxy: {
       "/api": {
