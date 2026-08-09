@@ -16,7 +16,14 @@ from app.routers import auth, views, ws
 # Create tables on startup (fine for a project; use migrations later if needed).
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Dogppelganger API")
+# Mount the auto-docs under /api so they're reachable through the nginx proxy
+# (nginx only forwards /api/* to this backend).
+app = FastAPI(
+    title="Dogppelganger API",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 
 # Let the browser call the API. In production everything is same-origin (nginx
 # proxies /api to this service), but in dev the React server is on :5173.
