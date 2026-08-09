@@ -9,16 +9,17 @@ lerna-debug.log*
 
 node_modules
 dist
-dist-ssr
-.output
-.vinxi
-.tanstack/**
-.nitro
 *.local
 
-# Wrangler / Cloudflare
-.wrangler/
+# Secrets / env
+.env
 .dev.vars
+
+# Python (backend)
+__pycache__/
+*.pyc
+.venv/
+*.db
 
 # Editor directories and files
 .vscode/*

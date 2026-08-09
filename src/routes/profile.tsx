@@ -1,10 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
 import { useStore } from "@/lib/store";
 
-export const Route = createFileRoute("/profile")({ component: Profile });
+export default Profile;
 
 function Profile() {
   return (
@@ -31,16 +31,20 @@ function Inner() {
   const myPosts = state.posts.filter((p) => p.userId === me.id);
   const myComments = state.posts.flatMap((p) => p.comments.filter((c) => c.userId === me.id));
   const likesReceived =
-    myPosts.reduce((n, p) => n + p.likes.length, 0) + myComments.reduce((n, c) => n + c.likes.length, 0);
+    myPosts.reduce((n, p) => n + p.likes.length, 0) +
+    myComments.reduce((n, c) => n + c.likes.length, 0);
   const dislikesReceived =
-    myPosts.reduce((n, p) => n + p.dislikes.length, 0) + myComments.reduce((n, c) => n + c.dislikes.length, 0);
+    myPosts.reduce((n, p) => n + p.dislikes.length, 0) +
+    myComments.reduce((n, c) => n + c.dislikes.length, 0);
 
   const visible = filter === "shared" ? shared : filter === "private" ? privateDogs : done;
 
   return (
     <div className="space-y-8">
       <header className="card-pop p-6 flex flex-wrap items-center gap-4">
-        <div className="h-16 w-16 rounded-full bg-sunshine border-2 border-[var(--ink)] flex items-center justify-center text-3xl shrink-0">🧑</div>
+        <div className="h-16 w-16 rounded-full bg-sunshine border-2 border-[var(--ink)] flex items-center justify-center text-3xl shrink-0">
+          🧑
+        </div>
         <div className="min-w-0">
           <div className="text-xs text-muted-foreground">Profile</div>
           <h1 className="font-display text-4xl font-black truncate">@{me.username}</h1>
@@ -52,7 +56,11 @@ function Inner() {
         <Stat emoji="🐕" label="Total dogs" value={done.length} />
         <Stat emoji="📣" label="Shared" value={shared.length} />
         <Stat emoji="✍️" label="Forum posts" value={myPosts.length} />
-        <Stat emoji="👍/👎" label="Reactions received" value={`${likesReceived} / ${dislikesReceived}`} />
+        <Stat
+          emoji="👍/👎"
+          label="Reactions received"
+          value={`${likesReceived} / ${dislikesReceived}`}
+        />
       </div>
 
       <section>
@@ -61,15 +69,26 @@ function Inner() {
         </div>
 
         <div className="flex gap-2 mb-4 flex-wrap">
-          <Tab active={filter === "all"} onClick={() => setFilter("all")}>All ({done.length})</Tab>
-          <Tab active={filter === "shared"} onClick={() => setFilter("shared")}>Shared ({shared.length})</Tab>
-          <Tab active={filter === "private"} onClick={() => setFilter("private")}>Private ({privateDogs.length})</Tab>
+          <Tab active={filter === "all"} onClick={() => setFilter("all")}>
+            All ({done.length})
+          </Tab>
+          <Tab active={filter === "shared"} onClick={() => setFilter("shared")}>
+            Shared ({shared.length})
+          </Tab>
+          <Tab active={filter === "private"} onClick={() => setFilter("private")}>
+            Private ({privateDogs.length})
+          </Tab>
         </div>
 
         {visible.length === 0 ? (
           <div className="card-pop p-8 text-center text-muted-foreground">
             {done.length === 0 ? (
-              <>No matches yet. <Link to="/upload" className="underline">Upload one →</Link></>
+              <>
+                No matches yet.{" "}
+                <Link to="/upload" className="underline">
+                  Upload one →
+                </Link>
+              </>
             ) : (
               <>Nothing in this bucket.</>
             )}
@@ -81,11 +100,23 @@ function Inner() {
                 <DogCard match={m} />
                 <div className="absolute top-2 right-2 flex gap-1">
                   {m.shared ? (
-                    <span className="text-xs bg-mint px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold">shared</span>
+                    <span className="text-xs bg-mint px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold">
+                      shared
+                    </span>
                   ) : (
-                    <button onClick={() => shareMatch(m.id)} className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold">share</button>
+                    <button
+                      onClick={() => shareMatch(m.id)}
+                      className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold"
+                    >
+                      share
+                    </button>
                   )}
-                  <button onClick={() => discardMatch(m.id)} className="text-xs bg-card px-2 py-1 rounded-full border-2 border-[var(--ink)]">🗑</button>
+                  <button
+                    onClick={() => discardMatch(m.id)}
+                    className="text-xs bg-card px-2 py-1 rounded-full border-2 border-[var(--ink)]"
+                  >
+                    🗑
+                  </button>
                 </div>
               </div>
             ))}
@@ -96,7 +127,15 @@ function Inner() {
   );
 }
 
-function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+function Tab({
+  active,
+  children,
+  onClick,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  onClick: () => void;
+}) {
   return (
     <button
       onClick={onClick}

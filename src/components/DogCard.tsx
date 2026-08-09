@@ -5,9 +5,15 @@ export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" |
   const emoji = size === "sm" ? "text-5xl" : size === "lg" ? "text-9xl" : "text-7xl";
   return (
     <div className={`card-pop-sm overflow-hidden`}>
-      <div className={`${dim} bg-gradient-to-br ${match.breedBg} flex items-center justify-center relative overflow-hidden`}>
+      <div
+        className={`${dim} bg-gradient-to-br ${match.breedBg} flex items-center justify-center relative overflow-hidden`}
+      >
         {match.breedImage ? (
-          <img src={match.breedImage} alt={match.breedName} className="w-full h-full object-cover" />
+          <img
+            src={match.breedImage}
+            alt={match.breedName}
+            className="w-full h-full object-cover"
+          />
         ) : (
           <span className={emoji}>{match.breedEmoji}</span>
         )}

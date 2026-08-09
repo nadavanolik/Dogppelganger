@@ -25,7 +25,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ## 2. Page specifications
 
-### 2.1 Landing / Home — `/`  · PUBLIC
+### 2.1 Landing / Home — `/` · PUBLIC
 
 **Purpose:** first impression; explains the concept and drives sign-up.
 
@@ -39,7 +39,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.2 Sign-up — `/signup`  · PUBLIC
+### 2.2 Sign-up — `/signup` · PUBLIC
 
 **Purpose:** create an account.
 
@@ -53,7 +53,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.3 Login — `/login`  · PUBLIC
+### 2.3 Login — `/login` · PUBLIC
 
 **Purpose:** authenticate an existing user.
 
@@ -67,35 +67,39 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.4 Upload / Match — `/upload`  · AUTH
+### 2.4 Upload / Match — `/upload` · AUTH
 
 **Purpose:** the core action — turn a human photo into a dog match. Handles both a single quick match and a batch upload.
 
 **Components:**
+
 - Drag-and-drop / file-picker accepting multiple `png`/`jpg`.
 - Per-file row with a thumbnail, a remove button, and an **"Urgent"** toggle.
 - "Match" submit button.
 - After submit, an inline progress area (or immediate redirect — see below).
 
 **Data / API:**
+
 - `POST /api/match` with one or more image files (multipart). Backend validates each file (type, size cap, decodes safely), stores the original in object storage, and enqueues a job per image with its `urgent` flag and byte-size (used by the queue for shortest-job-first ordering). Returns a list of `job_id`s and, for a single non-queued fast path, may return the match directly.
 - Progress arrives over WebSocket as `queue_update` and `match_ready` events (see Notifications, 2.11).
 
 **States:** idle; files staged; validating; rejected file (wrong type / too large) shown inline without blocking others; uploading; enqueued.
 
 **Navigation out:**
+
 - **Single image** → the Result page for that match once ready (or a spinner that resolves into it).
 - **Multiple images** → Dashboard, where each dog appears as its job completes (avoids blocking the user on a batch). Notifications announce each completion regardless of what page they're on.
 
 ---
 
-### 2.5 Result — `/result/:matchId`  · AUTH
+### 2.5 Result — `/result/:matchId` · AUTH
 
 **Purpose:** show a single completed human→dog match and let the user act on it.
 
 **Components:** side-by-side of the uploaded human photo and the matched dog face; optional caption; action row — **Share to gallery**, **Download**, **Delete**, and "Match another."
 
 **Data / API:**
+
 - `GET /api/match/:matchId` → the human image URL, dog image URL, metadata, and whether it's already shared.
 - `POST /api/match/:matchId/share` / `DELETE .../share` → toggle public-gallery visibility.
 - `DELETE /api/match/:matchId` → remove.
@@ -108,7 +112,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.6 Public Gallery — `/gallery`  · AUTH (browsable; featured subset also shown on Landing)
+### 2.6 Public Gallery — `/gallery` · AUTH (browsable; featured subset also shown on Landing)
 
 **Purpose:** browse all matches users chose to share; also the image pool the matching game draws from.
 
@@ -122,17 +126,19 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.7 Personal Dashboard / "My Dogs" — `/dashboard`  · AUTH
+### 2.7 Personal Dashboard / "My Dogs" — `/dashboard` · AUTH
 
 **Purpose:** the logged-in user's private hub and the default post-login landing page.
 
 **Components:**
+
 - **My matches** grid — every completed dog, click-through to its Result page.
 - **Processing queue** panel — images still being dogified, each with a live status (queued / processing / done) and its urgent flag; rows update in real time and turn into finished matches on completion.
 - **Shared items** — which of my matches are public.
 - **My forum activity** — my posts and my total likes/dislikes received.
 
 **Data / API:**
+
 - `GET /api/me/matches` → completed matches.
 - `GET /api/me/jobs` → in-flight queue jobs (initial state; then live via WebSocket `queue_update` / `match_ready`).
 - `GET /api/me/forum-stats` → post list + like/dislike totals.
@@ -143,13 +149,14 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.8 Single-player Game — `/game`  · AUTH
+### 2.8 Single-player Game — `/game` · AUTH
 
 **Purpose:** the matching game from the proposal — guess which person goes with which dog, drawn from shared results.
 
 **Components:** a round shows a set of people and a set of dogs; the player links each person to a dog (drag lines or tap-pairing, matching the proposal's visual); submit; score/feedback; "next round."
 
 **Data / API:**
+
 - `GET /api/game/round` → a set of shared human/dog pairs, shuffled, with the correct mapping withheld (server keeps the answer keyed to a round token).
 - `POST /api/game/round/:token/answer` → the player's pairing; returns correctness and score.
 
@@ -159,13 +166,14 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.9 Multiplayer Lobby — `/game/lobbies`  · AUTH
+### 2.9 Multiplayer Lobby — `/game/lobbies` · AUTH
 
 **Purpose:** create or join a shared game room.
 
 **Components:** list of open lobbies (name, host, player count), "Create lobby" button, "Join" per row.
 
 **Data / API:**
+
 - `GET /api/lobbies` → open lobbies (may also live-update over WebSocket).
 - `POST /api/lobbies` → create, returns `lobbyId`.
 - `POST /api/lobbies/:id/join` → join.
@@ -176,13 +184,14 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.10 Multiplayer Game Room — `/game/room/:lobbyId`  · AUTH
+### 2.10 Multiplayer Game Room — `/game/room/:lobbyId` · AUTH
 
 **Purpose:** the live shared game; players act on their own screens and everyone sees updates in real time, with server-authoritative state preventing contradictions.
 
 **Components:** player list / ready states, the shared board (people ↔ dogs), each player's actions reflected live, round timer/score, leave button.
 
 **Data / API + real-time:**
+
 - Initial state: `GET /api/lobbies/:id/state`.
 - All in-game actions flow over the WebSocket, scoped to the lobby: client sends `game_action` events (e.g. a proposed pairing); the **server validates against authoritative shared state**, applies or rejects, and broadcasts `game_state_update` to all players in the room. Rejection of a contradicting action is echoed back so no two clients diverge.
 - Events: `player_joined`, `player_left`, `game_state_update`, `round_start`, `round_end`.
@@ -193,11 +202,12 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.11 Notifications (global) — dropdown from the top bar, optional page `/notifications`  · AUTH
+### 2.11 Notifications (global) — dropdown from the top bar, optional page `/notifications` · AUTH
 
 **Purpose:** live, no-refresh alerts, reused across the whole app.
 
 **Triggers (WebSocket events):**
+
 - `match_ready` — a dog you uploaded finished processing (jump to its Result).
 - `dm_received` — a new direct message (jump to that conversation).
 - `post_reaction` — someone liked/disliked your post or comment.
@@ -210,7 +220,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.12 Forum Feed — `/forum`  · AUTH
+### 2.12 Forum Feed — `/forum` · AUTH
 
 **Purpose:** the social hub; all posts visible to everyone.
 
@@ -224,16 +234,18 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.13 Post Detail — `/forum/post/:postId`  · AUTH
+### 2.13 Post Detail — `/forum/post/:postId` · AUTH
 
 **Purpose:** read a full post and its comments; react and comment.
 
 **Components:**
+
 - Full post: title, body, image/video attachments, author, like/dislike buttons with counts.
 - Comment list: each with body, optional image/video, author, like/dislike counts.
 - Add-comment composer (body + optional media).
 
 **Data / API:**
+
 - `GET /api/forum/posts/:id` → post + comments.
 - `POST /api/forum/posts/:id/comments` → add comment (multipart if media).
 - `POST /api/forum/posts/:id/react` and `.../comments/:cid/react` → like/dislike (toggle).
@@ -244,7 +256,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.14 Create Post — `/forum/new` (or a modal over the Feed)  · AUTH
+### 2.14 Create Post — `/forum/new` (or a modal over the Feed) · AUTH
 
 **Purpose:** compose a new forum post.
 
@@ -258,7 +270,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.15 Direct Messages — Inbox — `/messages`  · AUTH
+### 2.15 Direct Messages — Inbox — `/messages` · AUTH
 
 **Purpose:** list of the user's private conversations.
 
@@ -272,13 +284,14 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.16 DM Conversation — `/messages/:conversationId`  · AUTH
+### 2.16 DM Conversation — `/messages/:conversationId` · AUTH
 
 **Purpose:** a private 1:1 chat, delivered live with no page refresh, history persisted.
 
 **Components:** message thread (body + optional image/video, sender-aligned), composer with attach, live "new message" insertion.
 
 **Data / API + real-time:**
+
 - `GET /api/dm/conversations/:id/messages?before=cursor` → paginated history (retrievable/saved).
 - Send: `POST /api/dm/conversations/:id/messages` (multipart) **or** a WebSocket `dm_send` event; the server persists and pushes `dm_received` to the recipient's socket for live delivery.
 
@@ -300,6 +313,7 @@ Once authenticated, a **persistent top bar** is present on every `AUTH` page:
 Logged-out pages (Landing, Login, Sign-up) show a minimal bar with **Log in** / **Sign up** only.
 
 **Guard rules:**
+
 - Unauthenticated request to any `AUTH` route → redirect to `/login?return_to=<path>`.
 - Authenticated user visiting `/login`, `/signup`, or `/` → redirect to `/dashboard`.
 - Log out → clear JWT, close WebSocket, redirect to `/`.
@@ -309,24 +323,24 @@ Logged-out pages (Landing, Login, Sign-up) show a minimal bar with **Log in** / 
 
 ## 4. Route table
 
-| Route | Access | Primary purpose | Main transitions out |
-|---|---|---|---|
-| `/` | PUBLIC | Landing | → `/signup`, `/login` (authed → `/dashboard`) |
-| `/signup` | PUBLIC | Register | success → `/dashboard`; → `/login` |
-| `/login` | PUBLIC | Authenticate | success → `return_to` or `/dashboard`; → `/signup` |
-| `/dashboard` | AUTH | Personal hub (default home) | → `/result/:id`, `/upload`, `/forum/post/:id` |
-| `/upload` | AUTH | Single/batch match | single → `/result/:id`; batch → `/dashboard` |
-| `/result/:matchId` | AUTH | View a match | share → stays; → `/gallery`, `/upload` |
-| `/gallery` | AUTH | Shared matches | → `/game` |
-| `/game` | AUTH | Single-player game | → `/game/lobbies` |
-| `/game/lobbies` | AUTH | Lobby list | create/join → `/game/room/:id` |
-| `/game/room/:lobbyId` | AUTH | Live multiplayer | leave → `/game/lobbies` |
-| `/forum` | AUTH | Post feed | → `/forum/post/:id`, `/forum/new` |
-| `/forum/post/:postId` | AUTH | Post + comments | → `/forum` |
-| `/forum/new` | AUTH | Compose post | success → `/forum/post/:id` |
-| `/messages` | AUTH | DM inbox | → `/messages/:id` |
-| `/messages/:conversationId` | AUTH | 1:1 chat | → `/messages` |
-| `/notifications` | AUTH | Alerts (mainly a dropdown) | deep-links to Result / DM / Post |
+| Route                       | Access | Primary purpose             | Main transitions out                               |
+| --------------------------- | ------ | --------------------------- | -------------------------------------------------- |
+| `/`                         | PUBLIC | Landing                     | → `/signup`, `/login` (authed → `/dashboard`)      |
+| `/signup`                   | PUBLIC | Register                    | success → `/dashboard`; → `/login`                 |
+| `/login`                    | PUBLIC | Authenticate                | success → `return_to` or `/dashboard`; → `/signup` |
+| `/dashboard`                | AUTH   | Personal hub (default home) | → `/result/:id`, `/upload`, `/forum/post/:id`      |
+| `/upload`                   | AUTH   | Single/batch match          | single → `/result/:id`; batch → `/dashboard`       |
+| `/result/:matchId`          | AUTH   | View a match                | share → stays; → `/gallery`, `/upload`             |
+| `/gallery`                  | AUTH   | Shared matches              | → `/game`                                          |
+| `/game`                     | AUTH   | Single-player game          | → `/game/lobbies`                                  |
+| `/game/lobbies`             | AUTH   | Lobby list                  | create/join → `/game/room/:id`                     |
+| `/game/room/:lobbyId`       | AUTH   | Live multiplayer            | leave → `/game/lobbies`                            |
+| `/forum`                    | AUTH   | Post feed                   | → `/forum/post/:id`, `/forum/new`                  |
+| `/forum/post/:postId`       | AUTH   | Post + comments             | → `/forum`                                         |
+| `/forum/new`                | AUTH   | Compose post                | success → `/forum/post/:id`                        |
+| `/messages`                 | AUTH   | DM inbox                    | → `/messages/:id`                                  |
+| `/messages/:conversationId` | AUTH   | 1:1 chat                    | → `/messages`                                      |
+| `/notifications`            | AUTH   | Alerts (mainly a dropdown)  | deep-links to Result / DM / Post                   |
 
 ---
 

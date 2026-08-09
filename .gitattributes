@@ -1,0 +1,12 @@
+# Normalize line endings to LF in the repo (prevents Windows CRLF from
+# breaking prettier/eslint and keeps diffs clean across machines).
+* text=auto eol=lf
+
+# Binary assets should never be normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

@@ -1,4 +1,12 @@
-import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { BREEDS, randomBreed, SAMPLE_POSTS } from "./mock";
 
 export type User = { id: string; username: string; email: string };
@@ -43,11 +51,33 @@ export type Post = {
 } & Reactions;
 
 export type DMMessage = { id: string; from: string; body: string; media?: string; at: number };
-export type Conversation = { id: string; participants: [string, string]; usernames: [string, string]; messages: DMMessage[] };
+export type Conversation = {
+  id: string;
+  participants: [string, string];
+  usernames: [string, string];
+  messages: DMMessage[];
+};
 
-export type Lobby = { id: string; name: string; hostId: string; hostName: string; players: { id: string; name: string; score: number }[]; status: "open" | "playing" | "done"; round: number; currentMatchId?: string };
+export type Lobby = {
+  id: string;
+  name: string;
+  hostId: string;
+  hostName: string;
+  players: { id: string; name: string; score: number }[];
+  status: "open" | "playing" | "done";
+  round: number;
+  currentMatchId?: string;
+};
 
-export type Notification = { id: string; userId: string; kind: "match" | "dm" | "reaction"; text: string; href?: string; read: boolean; at: number };
+export type Notification = {
+  id: string;
+  userId: string;
+  kind: "match" | "dm" | "reaction";
+  text: string;
+  href?: string;
+  read: boolean;
+  at: number;
+};
 
 type State = {
   user: User | null;
@@ -76,7 +106,7 @@ function seed(): State {
       humanImg: ["😀", "🧔", "👩‍🦱"][i],
       breedName: b.name,
       breedEmoji: b.emoji,
-      breedImage: b.image,
+      breedImage: undefined,
       breedBg: b.bg,
       trait: b.trait,
       status: "done",
@@ -96,7 +126,15 @@ function seed(): State {
     dislikes: [],
     comments: [],
   }));
-  return { user: null, users, matches: sampleMatches, posts, conversations: [], lobbies: [], notifications: [] };
+  return {
+    user: null,
+    users,
+    matches: sampleMatches,
+    posts,
+    conversations: [],
+    lobbies: [],
+    notifications: [],
+  };
 }
 
 function load(): State {
@@ -159,7 +197,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!hydrated.current) return;
     try {
       localStorage.setItem(KEY, JSON.stringify(state));
-    } catch {}
+    } catch {
+      // Ignore storage quota / private-mode errors.
+    }
   }, [state]);
 
   // Process queued matches: queued -> processing -> done
@@ -240,7 +280,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return m;
       },
       shareMatch(id) {
-        setState((s) => ({ ...s, matches: s.matches.map((m) => (m.id === id ? { ...m, shared: true } : m)) }));
+        setState((s) => ({
+          ...s,
+          matches: s.matches.map((m) => (m.id === id ? { ...m, shared: true } : m)),
+        }));
       },
       discardMatch(id) {
         setState((s) => ({ ...s, matches: s.matches.filter((m) => m.id !== id) }));
@@ -270,7 +313,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (target.commentId) {
               return {
                 ...p,
-                comments: p.comments.map((c) => (c.id === target.commentId ? flipReact(c, kind, u.id) : c)),
+                comments: p.comments.map((c) =>
+                  c.id === target.commentId ? flipReact(c, kind, u.id) : c,
+                ),
               };
             }
             return flipReact(p, kind, u.id);
@@ -278,7 +323,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // Notify the target owner
           let notifs = s.notifications;
           const post = s.posts.find((p) => p.id === target.postId);
-          const owner = target.commentId ? post?.comments.find((c) => c.id === target.commentId)?.userId : post?.userId;
+          const owner = target.commentId
+            ? post?.comments.find((c) => c.id === target.commentId)?.userId
+            : post?.userId;
           if (owner && owner !== u.id) {
             notifs = [
               {
@@ -307,7 +354,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   ...p,
                   comments: [
                     ...p.comments,
-                    { id: uid("c"), postId, userId: u.id, username: u.username, body, media, createdAt: Date.now(), likes: [], dislikes: [] },
+                    {
+                      id: uid("c"),
+                      postId,
+                      userId: u.id,
+                      username: u.username,
+                      body,
+                      media,
+                      createdAt: Date.now(),
+                      likes: [],
+                      dislikes: [],
+                    },
                   ],
                 },
           ),
@@ -337,7 +394,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const msg: DMMessage = { id: uid("dm"), from: me.id, body, media, at: Date.now() };
           return {
             ...s,
-            conversations: s.conversations.map((c) => (c.id === conversationId ? { ...c, messages: [...c.messages, msg] } : c)),
+            conversations: s.conversations.map((c) =>
+              c.id === conversationId ? { ...c, messages: [...c.messages, msg] } : c,
+            ),
             notifications: [
               {
                 id: uid("n"),
@@ -372,7 +431,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setState((s) => ({
           ...s,
           lobbies: s.lobbies.map((l) =>
-            l.id !== id || l.players.some((p) => p.id === u.id) ? l : { ...l, players: [...l.players, { id: u.id, name: u.username, score: 0 }] },
+            l.id !== id || l.players.some((p) => p.id === u.id)
+              ? l
+              : { ...l, players: [...l.players, { id: u.id, name: u.username, score: 0 }] },
           ),
         }));
       },
@@ -381,7 +442,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         setState((s) => ({
           ...s,
           lobbies: s.lobbies
-            .map((l) => (l.id !== id ? l : { ...l, players: l.players.filter((p) => p.id !== u.id) }))
+            .map((l) =>
+              l.id !== id ? l : { ...l, players: l.players.filter((p) => p.id !== u.id) },
+            )
             .filter((l) => l.players.length > 0),
         }));
       },
@@ -392,7 +455,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return {
             ...s,
             lobbies: s.lobbies.map((l) =>
-              l.id !== id ? l : { ...l, round: l.round + 1, status: "playing", currentMatchId: pick?.id },
+              l.id !== id
+                ? l
+                : { ...l, round: l.round + 1, status: "playing", currentMatchId: pick?.id },
             ),
           };
         });
@@ -404,14 +469,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           lobbies: s.lobbies.map((l) =>
             l.id !== id
               ? l
-              : { ...l, players: l.players.map((p) => (p.id === u.id ? { ...p, score: p.score + (correct ? 1 : 0) } : p)) },
+              : {
+                  ...l,
+                  players: l.players.map((p) =>
+                    p.id === u.id ? { ...p, score: p.score + (correct ? 1 : 0) } : p,
+                  ),
+                },
           ),
         }));
       },
       markAllRead() {
         const u = state.user;
         if (!u) return;
-        setState((s) => ({ ...s, notifications: s.notifications.map((n) => (n.userId === u.id ? { ...n, read: true } : n)) }));
+        setState((s) => ({
+          ...s,
+          notifications: s.notifications.map((n) => (n.userId === u.id ? { ...n, read: true } : n)),
+        }));
       },
     };
   }, [state]);

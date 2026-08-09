@@ -1,27 +1,33 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
 import { BREEDS } from "@/lib/mock";
 import { useStore } from "@/lib/store";
 
-export const Route = createFileRoute("/gallery")({ component: Gallery });
+export default Gallery;
 
 function Gallery() {
   const { state } = useStore();
   const [breed, setBreed] = useState<string>("all");
   const all = state.matches.filter((m) => m.shared && m.status === "done");
-  const filtered = useMemo(() => (breed === "all" ? all : all.filter((m) => m.breedName === breed)), [all, breed]);
+  const filtered = useMemo(
+    () => (breed === "all" ? all : all.filter((m) => m.breedName === breed)),
+    [all, breed],
+  );
 
   return (
     <AppShell>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-5xl font-black">Public gallery</h1>
-          <p className="text-muted-foreground mt-1">Every match shared by the pack. Feeds the multiplayer game.</p>
+          <p className="text-muted-foreground mt-1">
+            Every match shared by the pack. Feeds the multiplayer game.
+          </p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          <FilterChip active={breed === "all"} onClick={() => setBreed("all")}>All ({all.length})</FilterChip>
+          <FilterChip active={breed === "all"} onClick={() => setBreed("all")}>
+            All ({all.length})
+          </FilterChip>
           {BREEDS.map((b) => {
             const count = all.filter((m) => m.breedName === b.name).length;
             if (count === 0) return null;
@@ -41,13 +47,23 @@ function Gallery() {
         </div>
       ) : (
         <div className="mt-6 grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {filtered.map((m) => <DogCard key={m.id} match={m} />)}
+          {filtered.map((m) => (
+            <DogCard key={m.id} match={m} />
+          ))}
         </div>
       )}
     </AppShell>
   );
 }
 
-function FilterChip({ active, ...p }: { active: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...p} className={`btn-pop btn-pop-hover px-3 py-1.5 text-sm ${active ? "bg-primary text-primary-foreground" : "bg-card"}`} />;
+function FilterChip({
+  active,
+  ...p
+}: { active: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      {...p}
+      className={`btn-pop btn-pop-hover px-3 py-1.5 text-sm ${active ? "bg-primary text-primary-foreground" : "bg-card"}`}
+    />
+  );
 }

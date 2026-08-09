@@ -1,0 +1,46 @@
+# Three containers: site (nginx + React SPA), model (Flask API), db (Postgres).
+#
+# Local:  docker compose up --build
+# On VM:  docker compose pull && docker compose up -d   (uses prebuilt GHCR images)
+#
+# The image: tags let the same file build locally AND pull CI-built images on
+# the server. Values in ${...} come from a .env file sitting next to this file.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dogapp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dogapp}
+      POSTGRES_DB: ${POSTGRES_DB:-dogppelganger}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dogapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  model:
+    build: ./backend
+    image: ghcr.io/nadavanolik/dogppelganger-model:latest
+    restart: unless-stopped
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dogapp}:${POSTGRES_PASSWORD:-dogapp}@db:5432/${POSTGRES_DB:-dogppelganger}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  site:
+    build: .
+    image: ghcr.io/nadavanolik/dogppelganger-site:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - model
+
+volumes:
+  dbdata:

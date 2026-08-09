@@ -1,17 +1,42 @@
 import dogImages from "./dogImages.json";
 
 export const BREEDS = [
-  { name: "Golden Retriever", emoji: "🐕", bg: "from-amber-200 to-orange-300", trait: "sunny optimist" },
-  { name: "Corgi", emoji: "🐶", bg: "from-orange-200 to-rose-300", trait: "short kingdom, big attitude" },
+  {
+    name: "Golden Retriever",
+    emoji: "🐕",
+    bg: "from-amber-200 to-orange-300",
+    trait: "sunny optimist",
+  },
+  {
+    name: "Corgi",
+    emoji: "🐶",
+    bg: "from-orange-200 to-rose-300",
+    trait: "short kingdom, big attitude",
+  },
   { name: "Shiba Inu", emoji: "🦊", bg: "from-yellow-200 to-amber-400", trait: "polite chaos" },
-  { name: "French Bulldog", emoji: "🐺", bg: "from-stone-200 to-stone-400", trait: "professional loafer" },
-  { name: "Border Collie", emoji: "🐕‍🦺", bg: "from-slate-200 to-slate-400", trait: "over-caffeinated genius" },
+  {
+    name: "French Bulldog",
+    emoji: "🐺",
+    bg: "from-stone-200 to-stone-400",
+    trait: "professional loafer",
+  },
+  {
+    name: "Border Collie",
+    emoji: "🐕‍🦺",
+    bg: "from-slate-200 to-slate-400",
+    trait: "over-caffeinated genius",
+  },
   { name: "Dachshund", emoji: "🌭", bg: "from-red-200 to-amber-300", trait: "long. very long." },
   { name: "Poodle", emoji: "🐩", bg: "from-pink-200 to-fuchsia-300", trait: "runway attendee" },
   { name: "Husky", emoji: "🐺", bg: "from-sky-100 to-cyan-300", trait: "screams for no reason" },
   { name: "Pug", emoji: "🐽", bg: "from-yellow-100 to-amber-200", trait: "snores heroically" },
   { name: "Beagle", emoji: "🐕", bg: "from-lime-100 to-emerald-200", trait: "nose-first life" },
-  { name: "Chihuahua", emoji: "🐭", bg: "from-fuchsia-100 to-pink-200", trait: "tiny, furious, iconic" },
+  {
+    name: "Chihuahua",
+    emoji: "🐭",
+    bg: "from-fuchsia-100 to-pink-200",
+    trait: "tiny, furious, iconic",
+  },
   { name: "Great Dane", emoji: "🐴", bg: "from-indigo-100 to-blue-300", trait: "horse in denial" },
 ];
 

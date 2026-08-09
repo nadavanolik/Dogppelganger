@@ -1,4 +1,4 @@
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link, NavLink as RouterNavLink, useNavigate } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 import { useStore } from "@/lib/store";
 import {
@@ -12,7 +12,7 @@ import {
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { state, logout, markAllRead } = useStore();
-  const router = useRouter();
+  const navigate = useNavigate();
   const [openNotif, setOpenNotif] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const me = state.user;
@@ -25,8 +25,12 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b-2 border-[var(--ink)] bg-background/90 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0">
-            <div className="h-10 w-10 rounded-full bg-primary border-2 border-[var(--ink)] flex items-center justify-center text-xl shadow-pop-sm">🐶</div>
-            <span className="font-display text-2xl font-black tracking-tight hidden sm:inline">dogppleganger</span>
+            <div className="h-10 w-10 rounded-full bg-primary border-2 border-[var(--ink)] flex items-center justify-center text-xl shadow-pop-sm">
+              🐶
+            </div>
+            <span className="font-display text-2xl font-black tracking-tight hidden sm:inline">
+              dogppleganger
+            </span>
           </Link>
 
           {me && (
@@ -65,21 +69,36 @@ export function AppShell({ children }: { children: ReactNode }) {
                     className="btn-pop btn-pop-hover bg-sunshine px-3 py-1.5 text-sm"
                     aria-label="Notifications"
                   >
-                    🔔 {unread > 0 && <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs h-5 min-w-5 px-1">{unread}</span>}
+                    🔔{" "}
+                    {unread > 0 && (
+                      <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary text-primary-foreground text-xs h-5 min-w-5 px-1">
+                        {unread}
+                      </span>
+                    )}
                   </button>
                   {openNotif && (
                     <div className="absolute right-0 mt-2 w-80 card-pop p-2 max-h-96 overflow-auto z-50">
                       <div className="flex items-center justify-between px-2 py-1">
                         <div className="font-display font-bold">Notifications</div>
-                        <Link to="/notifications" className="text-xs underline" onClick={() => setOpenNotif(false)}>see all</Link>
+                        <Link
+                          to="/notifications"
+                          className="text-xs underline"
+                          onClick={() => setOpenNotif(false)}
+                        >
+                          see all
+                        </Link>
                       </div>
-                      {myNotifs.length === 0 && <div className="p-3 text-sm text-muted-foreground">No news yet. Go make some dogs.</div>}
+                      {myNotifs.length === 0 && (
+                        <div className="p-3 text-sm text-muted-foreground">
+                          No news yet. Go make some dogs.
+                        </div>
+                      )}
                       {myNotifs.slice(0, 8).map((n) => (
                         <button
                           key={n.id}
                           onClick={() => {
                             setOpenNotif(false);
-                            if (n.href) router.navigate({ to: n.href });
+                            if (n.href) navigate(n.href);
                           }}
                           className="w-full text-left px-2 py-2 rounded-lg hover:bg-muted flex gap-2"
                         >
@@ -98,12 +117,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <span className="text-sm font-bold hidden sm:inline">@{me.username}</span>
                     <span className="text-xs">▾</span>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="border-2 border-[var(--ink)] shadow-pop-sm">
+                  <DropdownMenuContent
+                    align="end"
+                    className="border-2 border-[var(--ink)] shadow-pop-sm"
+                  >
                     <DropdownMenuLabel>@{me.username}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => router.navigate({ to: "/profile" })}>🐕 My profile & dogs</DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate("/profile")}>
+                      🐕 My profile & dogs
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => { logout(); router.navigate({ to: "/" }); }}>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        logout();
+                        navigate("/");
+                      }}
+                    >
                       🚪 Log out
                     </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -120,8 +149,15 @@ export function AppShell({ children }: { children: ReactNode }) {
               </>
             ) : (
               <>
-                <Link to="/login" className="btn-pop btn-pop-hover bg-card px-4 py-1.5 text-sm">Log in</Link>
-                <Link to="/signup" className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-1.5 text-sm">Sign up</Link>
+                <Link to="/login" className="btn-pop btn-pop-hover bg-card px-4 py-1.5 text-sm">
+                  Log in
+                </Link>
+                <Link
+                  to="/signup"
+                  className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-1.5 text-sm"
+                >
+                  Sign up
+                </Link>
               </>
             )}
           </div>
@@ -129,14 +165,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {me && mobileNav && (
           <div className="md:hidden border-t border-[var(--ink)]/20 px-4 py-3 grid grid-cols-2 gap-2 bg-background">
-            {([
-              { to: "/upload", label: "🐕 Match" },
-              { to: "/gallery", label: "🖼 Gallery" },
-              { to: "/forum", label: "💬 Forum" },
-              { to: "/play", label: "🎮 Play" },
-              { to: "/messages", label: "💌 Messages" },
-              { to: "/profile", label: "👤 Profile" },
-            ] as const).map((n) => (
+            {(
+              [
+                { to: "/upload", label: "🐕 Match" },
+                { to: "/gallery", label: "🖼 Gallery" },
+                { to: "/forum", label: "💬 Forum" },
+                { to: "/play", label: "🎮 Play" },
+                { to: "/messages", label: "💌 Messages" },
+                { to: "/profile", label: "👤 Profile" },
+              ] as const
+            ).map((n) => (
               <Link
                 key={n.to}
                 to={n.to}
@@ -159,13 +197,16 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 function NavLink({ to, label }: { to: string; label: string }) {
   return (
-    <Link
+    <RouterNavLink
       to={to}
-      className="px-3 py-1.5 rounded-full text-sm font-bold hover:bg-sunshine transition"
-      activeProps={{ className: "px-3 py-1.5 rounded-full text-sm font-bold bg-primary text-primary-foreground border-2 border-[var(--ink)]" }}
+      className={({ isActive }) =>
+        isActive
+          ? "px-3 py-1.5 rounded-full text-sm font-bold bg-primary text-primary-foreground border-2 border-[var(--ink)]"
+          : "px-3 py-1.5 rounded-full text-sm font-bold hover:bg-sunshine transition"
+      }
     >
       {label}
-    </Link>
+    </RouterNavLink>
   );
 }
 
@@ -178,8 +219,15 @@ export function RequireAuth({ children }: { children: ReactNode }) {
         <h2 className="font-display text-2xl font-bold">Only signed-in dogs beyond this point</h2>
         <p className="text-muted-foreground mt-1">Log in or make an account to continue.</p>
         <div className="mt-4 flex gap-2 justify-center">
-          <Link to="/login" className="btn-pop btn-pop-hover bg-card px-4 py-2">Log in</Link>
-          <Link to="/signup" className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-2">Sign up</Link>
+          <Link to="/login" className="btn-pop btn-pop-hover bg-card px-4 py-2">
+            Log in
+          </Link>
+          <Link
+            to="/signup"
+            className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-2"
+          >
+            Sign up
+          </Link>
         </div>
       </div>
     );
