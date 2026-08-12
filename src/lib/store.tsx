@@ -58,16 +58,9 @@ export type Conversation = {
   messages: DMMessage[];
 };
 
-export type Lobby = {
-  id: string;
-  name: string;
-  hostId: string;
-  hostName: string;
-  players: { id: string; name: string; score: number }[];
-  status: "open" | "playing" | "done";
-  round: number;
-  currentMatchId?: string;
-};
+// Multiplayer rooms deliberately live *only* on the server (see
+// src/lib/gameSocket.ts). Keeping a copy here was what made the old lobby fake:
+// localStorage is per-browser, so two people could never share a room.
 
 export type Notification = {
   id: string;
@@ -85,7 +78,6 @@ type State = {
   matches: DogMatch[];
   posts: Post[];
   conversations: Conversation[];
-  lobbies: Lobby[];
   notifications: Notification[];
 };
 
@@ -132,7 +124,6 @@ function seed(): State {
     matches: sampleMatches,
     posts,
     conversations: [],
-    lobbies: [],
     notifications: [],
   };
 }
@@ -166,12 +157,6 @@ type Ctx = {
   // dms
   openConversation: (otherUserId: string, otherUsername: string) => Conversation;
   sendMessage: (conversationId: string, body: string, media?: string) => void;
-  // lobbies
-  createLobby: (name: string) => Lobby;
-  joinLobby: (id: string) => void;
-  leaveLobby: (id: string) => void;
-  advanceLobbyRound: (id: string) => void;
-  submitLobbyGuess: (id: string, correct: boolean) => void;
   // notifications
   markAllRead: () => void;
 };
@@ -411,72 +396,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ],
           };
         });
-      },
-      createLobby(name) {
-        const u = state.user ?? state.users[0];
-        const lobby: Lobby = {
-          id: uid("lb"),
-          name,
-          hostId: u.id,
-          hostName: u.username,
-          players: [{ id: u.id, name: u.username, score: 0 }],
-          status: "open",
-          round: 0,
-        };
-        setState((s) => ({ ...s, lobbies: [lobby, ...s.lobbies] }));
-        return lobby;
-      },
-      joinLobby(id) {
-        const u = state.user ?? state.users[0];
-        setState((s) => ({
-          ...s,
-          lobbies: s.lobbies.map((l) =>
-            l.id !== id || l.players.some((p) => p.id === u.id)
-              ? l
-              : { ...l, players: [...l.players, { id: u.id, name: u.username, score: 0 }] },
-          ),
-        }));
-      },
-      leaveLobby(id) {
-        const u = state.user ?? state.users[0];
-        setState((s) => ({
-          ...s,
-          lobbies: s.lobbies
-            .map((l) =>
-              l.id !== id ? l : { ...l, players: l.players.filter((p) => p.id !== u.id) },
-            )
-            .filter((l) => l.players.length > 0),
-        }));
-      },
-      advanceLobbyRound(id) {
-        setState((s) => {
-          const pool = s.matches.filter((m) => m.shared && m.status === "done");
-          const pick = pool[Math.floor(Math.random() * Math.max(pool.length, 1))];
-          return {
-            ...s,
-            lobbies: s.lobbies.map((l) =>
-              l.id !== id
-                ? l
-                : { ...l, round: l.round + 1, status: "playing", currentMatchId: pick?.id },
-            ),
-          };
-        });
-      },
-      submitLobbyGuess(id, correct) {
-        const u = state.user ?? state.users[0];
-        setState((s) => ({
-          ...s,
-          lobbies: s.lobbies.map((l) =>
-            l.id !== id
-              ? l
-              : {
-                  ...l,
-                  players: l.players.map((p) =>
-                    p.id === u.id ? { ...p, score: p.score + (correct ? 1 : 0) } : p,
-                  ),
-                },
-          ),
-        }));
       },
       markAllRead() {
         const u = state.user;

@@ -14,6 +14,9 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:5000",
         changeOrigin: true,
+        // The multiplayer game connects to /api/game/ws, so the dev proxy has to
+        // forward the WebSocket upgrade too (nginx already does in production).
+        ws: true,
       },
     },
   },
