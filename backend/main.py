@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
 from app import models  # noqa: F401  (import so tables register on Base)
+from app.game import router as game_router
 from app.routers import auth, views, ws
 
 # Create tables on startup (fine for a project; use migrations later if needed).
@@ -38,6 +39,9 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(views.router)
 app.include_router(ws.router)
+# Games (REST + their own WebSocket). Self-contained in app/game — see that
+# package's docstring for how it folds into ws.py's socket later.
+app.include_router(game_router)
 
 
 if __name__ == "__main__":
