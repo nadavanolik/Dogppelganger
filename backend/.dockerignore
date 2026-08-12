@@ -1,7 +1,21 @@
+# Keep local development state out of the image.
+#
+# Without this, `COPY . .` bakes in whatever is lying around from running the
+# backend locally — and because Docker seeds an empty named volume from the
+# image's contents, a stale data/leaderboards.json would reappear as the
+# starting leaderboard on a fresh deploy.
+data/
+*.db
+.env
+
 __pycache__/
 *.pyc
 .venv/
 venv/
-*.db
-.env
-.gitignore
+
+# Test-only; the image installs requirements.txt alone.
+tests/
+pytest.ini
+requirements-dev.txt
+
+Dockerfile
