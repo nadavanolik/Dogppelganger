@@ -24,7 +24,7 @@ jobs:
       - run: npm run build
 
   backend:
-    name: Backend (install, compile)
+    name: Backend (install, compile, test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,7 +32,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - run: pip install -r backend/requirements.txt
+      # requirements-dev.txt is test-only (pytest, httpx). It is deliberately
+      # not installed into the image — see backend/Dockerfile.
+      - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
       - name: Byte-compile (syntax check)
-        run: python -m compileall backend/main.py backend/app
+        run: python -m compileall backend/main.py backend/app backend/tests
+      - name: Game tests (engine + API + WebSocket)
+        run: pytest
+        working-directory: backend

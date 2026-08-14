@@ -29,6 +29,10 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-me}
       DATABASE_URL: postgresql://${POSTGRES_USER:-dogapp}:${POSTGRES_PASSWORD:-dogapp}@db:5432/${POSTGRES_DB:-dogppelganger}
+    volumes:
+      # Game leaderboards snapshot here (app/game/store.py). A named volume so
+      # they survive `up --build` and CD deploys without needing the database.
+      - gamedata:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -44,3 +48,4 @@ services:
 
 volumes:
   dbdata:
+  gamedata:

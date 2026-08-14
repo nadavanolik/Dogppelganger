@@ -21,6 +21,9 @@ __pycache__/
 .venv/
 *.db
 
+# Game leaderboard snapshots (a Docker volume in prod; a local dir in dev)
+backend/data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
