@@ -31,7 +31,15 @@ log = logging.getLogger(__name__)
 
 BOARD_SOLO = "solo"
 BOARD_MULTIPLAYER = "multiplayer"
-BOARDS = (BOARD_SOLO, BOARD_MULTIPLAYER)
+# Mix & Match keeps its own boards: a Streak Survival score counts answers and a
+# Mix & Match score counts points, so ranking them together would compare
+# numbers that don't mean the same thing.
+BOARD_SOLO_MATCH = "solo_match"
+BOARD_MULTIPLAYER_MATCH = "multiplayer_match"
+BOARDS = (BOARD_SOLO, BOARD_MULTIPLAYER, BOARD_SOLO_MATCH, BOARD_MULTIPLAYER_MATCH)
+
+# Which boards rank by wins (party games) rather than by personal best.
+_WIN_RANKED = (BOARD_MULTIPLAYER, BOARD_MULTIPLAYER_MATCH)
 
 DATA_DIR = Path(os.getenv("GAME_DATA_DIR", "data"))
 DATA_FILE = DATA_DIR / "leaderboards.json"
@@ -149,7 +157,7 @@ def flush() -> None:
 
 def _sorted(board: str) -> list[Entry]:
     entries = list(_state.boards.get(board, {}).values())
-    if board == BOARD_MULTIPLAYER:
+    if board in _WIN_RANKED:
         # Wins first — the point of a party game — then best single-game score.
         entries.sort(key=lambda e: (-e.wins, -e.best, e.updatedAt))
     else:
@@ -167,10 +175,16 @@ def _entry(board: str, player_id: str, name: str) -> Entry:
     return entry
 
 
-def record_solo_run(player_id: str, name: str, correct: int, longest_streak: int) -> None:
-    """Fold a finished Streak Survival run into the solo board."""
+def record_solo_run(
+    player_id: str,
+    name: str,
+    correct: int,
+    longest_streak: int,
+    board: str = BOARD_SOLO,
+) -> None:
+    """Fold a finished single-player run into one of the solo boards."""
     with _lock:
-        entry = _entry(BOARD_SOLO, player_id, name)
+        entry = _entry(board, player_id, name)
         entry.gamesPlayed += 1
         entry.best = max(entry.best, correct)
         entry.longestStreak = max(entry.longestStreak, longest_streak)
@@ -179,11 +193,16 @@ def record_solo_run(player_id: str, name: str, correct: int, longest_streak: int
 
 
 def record_multiplayer_result(
-    player_id: str, name: str, score: int, longest_streak: int, won: bool
+    player_id: str,
+    name: str,
+    score: int,
+    longest_streak: int,
+    won: bool,
+    board: str = BOARD_MULTIPLAYER,
 ) -> None:
-    """Fold a finished multiplayer game into the multiplayer board."""
+    """Fold a finished multiplayer game into one of the multiplayer boards."""
     with _lock:
-        entry = _entry(BOARD_MULTIPLAYER, player_id, name)
+        entry = _entry(board, player_id, name)
         entry.gamesPlayed += 1
         entry.best = max(entry.best, score)
         entry.longestStreak = max(entry.longestStreak, longest_streak)

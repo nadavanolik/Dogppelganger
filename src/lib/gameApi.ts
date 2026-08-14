@@ -8,6 +8,12 @@
 
 const BASE = "/api/game";
 
+/** Spot the Double (one human, N dogs) or Mix & Match (four of each). */
+export type GameType = "double" | "match";
+
+/** Each mode keeps its own board: answers and points aren't the same currency. */
+export type BoardName = "solo" | "multiplayer" | "solo_match" | "multiplayer_match";
+
 export type Question = {
   index: number;
   itemId: string;
@@ -33,6 +39,40 @@ export type SoloResult = SoloState & {
   rank?: number | null;
 };
 
+// ------------------------------------------------------------- Mix & Match
+
+export type BoardHuman = { slot: number; id: string; humanSeed: string; humanUrl: string | null };
+export type BoardDog = { slot: number; dogIndex: number };
+
+/** The dealt board. Slots are positions in these arrays — a claim is two ints. */
+export type MatchBoard = { humans: BoardHuman[]; dogs: BoardDog[] };
+
+/** Who holds which human↔dog combination. Public on purpose: it's the game. */
+export type Claim = { human: number; dog: number; playerId: string; name: string };
+
+/** human slot -> dog slot. Object keys arrive from JSON as strings. */
+export type PairMap = Record<string, number>;
+
+export type SoloMatchState = {
+  runToken: string;
+  lives: number;
+  score: number;
+  boardsPlayed: number;
+  streak: number;
+  longestStreak: number;
+  over: boolean;
+  board: MatchBoard | null;
+};
+
+export type SoloMatchResult = SoloMatchState & {
+  wasPerfect: boolean;
+  roundCorrect: number;
+  marks: Record<string, boolean>;
+  boardAnswer: PairMap;
+  leaderboard?: LeaderEntry[];
+  rank?: number | null;
+};
+
 export type LeaderEntry = {
   playerId: string;
   name: string;
@@ -47,11 +87,19 @@ export type RoomSummary = {
   id: string;
   code: string;
   name: string;
+  gameType: GameType;
   phase: RoomPhase;
   hostName: string;
   playerCount: number;
   roundsTotal: number;
   secondsPerQuestion: number;
+};
+
+export type RoomOptions = {
+  rounds: number[];
+  seconds: number[];
+  matchSeconds: number[];
+  gameTypes: GameType[];
 };
 
 export type RoomPhase = "lobby" | "countdown" | "question" | "reveal" | "over";
@@ -63,22 +111,30 @@ export type RoomPlayer = {
   streak: number;
   connected: boolean;
   isHost: boolean;
+  /** Nothing left to do this round — answered, or submitted a board. */
   answered: boolean;
+  submitted: boolean;
   lastAward: number;
   lastCorrect: boolean | null;
+  lastRoundCorrect: number;
 };
 
 export type RoomState = {
   id: string;
   code: string;
   name: string;
+  gameType: GameType;
   phase: RoomPhase;
   hostId: string;
   roundsTotal: number;
   secondsPerQuestion: number;
   questionNumber: number;
+  // Exactly one of `question` / `board` is populated, decided by `gameType`.
   question: Question | null;
   answerIndex: number | null;
+  board: MatchBoard | null;
+  boardAnswer: PairMap | null;
+  claims: Claim[];
   endsAt: number | null;
   serverNow: number;
   players: RoomPlayer[];
@@ -108,13 +164,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const gameApi = {
-  listRooms: () =>
-    request<{ rooms: RoomSummary[]; options: { rounds: number[]; seconds: number[] } }>("/rooms"),
+  listRooms: () => request<{ rooms: RoomSummary[]; options: RoomOptions }>("/rooms"),
 
-  createRoom: (playerId: string, playerName: string, name: string) =>
+  /** `gameType` is optional: the host normally picks it in the room instead. */
+  createRoom: (playerId: string, playerName: string, name: string, gameType?: GameType) =>
     request<RoomSummary>("/rooms", {
       method: "POST",
-      body: JSON.stringify({ playerId, playerName, name }),
+      body: JSON.stringify({ playerId, playerName, name, ...(gameType ? { gameType } : {}) }),
     }),
 
   roomByCode: (code: string) => request<RoomSummary>(`/rooms/by-code/${encodeURIComponent(code)}`),
@@ -131,6 +187,18 @@ export const gameApi = {
       body: JSON.stringify({ runToken, choice }),
     }),
 
-  leaderboard: (board: "solo" | "multiplayer", limit = 20) =>
+  soloMatchStart: (playerId: string, playerName: string) =>
+    request<SoloMatchState>("/solo/match/start", {
+      method: "POST",
+      body: JSON.stringify({ playerId, playerName }),
+    }),
+
+  soloMatchSubmit: (runToken: string, pairs: PairMap) =>
+    request<SoloMatchResult>("/solo/match/submit", {
+      method: "POST",
+      body: JSON.stringify({ runToken, pairs }),
+    }),
+
+  leaderboard: (board: BoardName, limit = 20) =>
     request<{ board: string; entries: LeaderEntry[] }>(`/leaderboard/${board}?limit=${limit}`),
 };

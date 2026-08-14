@@ -1,17 +1,31 @@
-"""Multiplayer rooms: a Kahoot-style race, server-authoritative.
+"""Multiplayer rooms, server-authoritative — two game types share one engine.
 
-Everyone in a room sees the same question at the same moment, answers inside the
-same window, and scores more for answering sooner. The server owns both the clock
-and the answer key, which is what makes the mode honest:
+**Spot the Double** (``"double"``) is a Kahoot-style race: one human, four dogs,
+everyone answers the same question inside the same window and scores more for
+answering sooner. Players never interact; the clock is the only shared thing.
+
+**Mix & Match** (``"match"``) is the game ProjectPlan 2.10 describes, and the one
+with genuine shared state. Each round deals four humans and four dogs. Pairing a
+human with a dog *claims that exact combination* for you — live, exclusively, and
+visibly. Nobody else can use that combination, though both tiles remain in play
+for any other combination. Un-pair and the claim is released. Correctness stays
+secret until the round ends, so speed buys you the pairing you believe in rather
+than confirmation that you were right (which would reduce the game to brute force).
+
+What both types share, and what makes them honest:
 
 * One ``asyncio`` task per room drives ``lobby -> countdown -> question ->
   reveal -> ... -> over``. Clients never advance the game; they only render what
-  the server broadcast.
-* The question closes when *the server* says so — at its own deadline, or early
-  once every connected player has locked in.
-* Only a player's **first** answer to a question counts. A second one is
-  rejected and the rejection is echoed back, so two clients can never end up
-  believing different things (ProjectPlan 2.10).
+  the server broadcast. For a match room, ``question`` means "the board is open";
+  the phase names are shared so the timer, scoreboard and lobby list don't need
+  to know which game they're showing.
+* The round closes when *the server* says so — at its own deadline, or early once
+  every connected player is done.
+* **Contradictions are resolved here, not on the client.** An answer can only be
+  given once, and a claim can only be taken once: both checks run with no ``await``
+  between the test and the mutation, so on a single-threaded event loop the
+  check-and-take is atomic. The loser is told why, individually, and the
+  authoritative state is rebroadcast to everyone (ProjectPlan 2.10).
 * Scores are computed at the reveal, not on receipt, so nobody learns the answer
   early by watching their own points move.
 
@@ -28,7 +42,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from . import board as boards
 from . import rounds, store
+from .board import Board
 from .rounds import Question
 
 log = logging.getLogger(__name__)
@@ -40,6 +56,10 @@ Sender = Callable[[str, dict], Awaitable[None]]
 CODE_ALPHABET = "ACDEFGHJKLMNPQRTUVWXY"
 CODE_LENGTH = 4
 
+GAME_DOUBLE = "double"
+GAME_MATCH = "match"
+GAME_TYPES = (GAME_DOUBLE, GAME_MATCH)
+
 COUNTDOWN_SECONDS = 3
 REVEAL_SECONDS = 5
 DEFAULT_ROUNDS = 8
@@ -48,10 +68,26 @@ ROUNDS_CHOICES = range(5, 21)
 SECONDS_CHOICES = (10, 15, 20)
 OPTIONS_PER_QUESTION = 4
 
+# A board of four pairs takes longer to think about than one four-way question,
+# so the match type gets its own scale rather than sharing the short one.
+MATCH_SECONDS_CHOICES = (30, 45, 60)
+MATCH_DEFAULT_SECONDS = 45
+MATCH_DEFAULT_ROUNDS = 5
+
+# Half the value of a pair is for being right and half for committing early —
+# the same shape as the double type's scoring, spread over a whole board.
+MATCH_BASE_PER_PAIR = 200
+MATCH_SPEED_MAX = 300
+MATCH_PERFECT_BONUS = 500
+
 # A refresh drops the socket for a moment; don't tear the room down over it.
 EMPTY_ROOM_GRACE = 30.0
 
 MAX_PLAYERS = 12
+
+
+def seconds_choices(game_type: str) -> tuple[int, ...]:
+    return MATCH_SECONDS_CHOICES if game_type == GAME_MATCH else SECONDS_CHOICES
 
 
 def now_ms() -> int:
@@ -68,17 +104,30 @@ class Member:
     streak: int = 0
     longest_streak: int = 0
     correct: int = 0
-    # Per-question, reset each round:
-    answer: int | None = None
+    # Per-round, reset each round:
+    answer: int | None = None  # double: the option they picked
     answered_at: float | None = None
+    pairs: dict[int, int] = field(default_factory=dict)  # match: human slot -> dog slot
+    claimed_at: dict[int, float] = field(default_factory=dict)  # human slot -> when, for the bonus
+    submitted: bool = False
     last_award: int = 0
     last_correct: bool | None = None
+    last_round_correct: int = 0
+
+    @property
+    def done_with_round(self) -> bool:
+        """Whether this player still has anything to do in the open round."""
+        return self.submitted or self.answer is not None
 
     def reset_for_question(self) -> None:
         self.answer = None
         self.answered_at = None
+        self.pairs = {}
+        self.claimed_at = {}
+        self.submitted = False
         self.last_award = 0
         self.last_correct = None
+        self.last_round_correct = 0
 
     def reset_for_game(self) -> None:
         self.score = 0
@@ -95,11 +144,15 @@ class Room:
     name: str
     host_id: str
     members: dict[str, Member] = field(default_factory=dict)
+    game_type: str = GAME_DOUBLE
     phase: str = "lobby"  # lobby | countdown | question | reveal | over
     rounds_total: int = DEFAULT_ROUNDS
     seconds_per_question: int = DEFAULT_SECONDS
     questions: list[Question] = field(default_factory=list)
     q_index: int = -1
+    # Match only: the board on the table and who holds which combination.
+    board: Board | None = None
+    claims: dict[tuple[int, int], str] = field(default_factory=dict)  # (human, dog) -> player id
     ends_at_ms: int | None = None
     task: asyncio.Task | None = None
     all_answered: asyncio.Event = field(default_factory=asyncio.Event)
@@ -111,6 +164,19 @@ class Room:
         if 0 <= self.q_index < len(self.questions):
             return self.questions[self.q_index]
         return None
+
+    @property
+    def is_match(self) -> bool:
+        return self.game_type == GAME_MATCH
+
+    @property
+    def leaderboard_name(self) -> str:
+        """Which board a finished game here belongs on.
+
+        Match points and double points aren't the same currency, so they get
+        separate boards rather than being ranked against each other.
+        """
+        return store.BOARD_MULTIPLAYER_MATCH if self.is_match else store.BOARD_MULTIPLAYER
 
     @property
     def connected_members(self) -> list[Member]:
@@ -128,6 +194,17 @@ def _award(remaining_ratio: float, streak: float) -> int:
     base = 1000 * (0.5 + 0.5 * max(0.0, min(1.0, remaining_ratio)))
     bonus = 100 * min(max(int(streak) - 1, 0), 5)
     return int(round(base / 10) * 10) + bonus
+
+
+def _pair_award(remaining_ratio: float) -> int:
+    """What one correct pairing is worth, given how early it was claimed.
+
+    Only correct pairs score. A wrong one costs nothing beyond the combination it
+    wasted and the chance to hold a right one, which is punishment enough — an
+    explicit penalty would only discourage committing to a hunch.
+    """
+    ratio = max(0.0, min(1.0, remaining_ratio))
+    return MATCH_BASE_PER_PAIR + int(round(MATCH_SPEED_MAX * ratio / 10) * 10)
 
 
 class RoomRegistry:
@@ -173,12 +250,20 @@ class RoomRegistry:
                 return code
         raise RuntimeError("could not allocate a free room code")
 
-    def create(self, name: str, host_id: str, host_name: str) -> Room:
+    def create(
+        self, name: str, host_id: str, host_name: str, game_type: str = GAME_DOUBLE
+    ) -> Room:
+        if game_type not in GAME_TYPES:
+            raise ValueError("Pick either Spot the Double or Mix & Match.")
+        is_match = game_type == GAME_MATCH
         room = Room(
             id=secrets.token_urlsafe(8),
             code=self._new_code(),
             name=name.strip()[:60] or f"{host_name}'s room",
             host_id=host_id,
+            game_type=game_type,
+            rounds_total=MATCH_DEFAULT_ROUNDS if is_match else DEFAULT_ROUNDS,
+            seconds_per_question=MATCH_DEFAULT_SECONDS if is_match else DEFAULT_SECONDS,
         )
         self.rooms[room.id] = room
         self._by_code[room.code] = room.id
@@ -205,20 +290,37 @@ class RoomRegistry:
         await self.broadcast(room, {"type": "room_state", "payload": self.state(room)})
 
     def state(self, room: Room) -> dict:
-        """The whole client-visible truth about a room. Never includes an answer."""
+        """The whole client-visible truth about a room. Never includes an answer
+        before the reveal — for either game type."""
         question = room.current
         reveal = room.phase in ("reveal", "over")
+        playing = room.phase != "lobby"
         return {
             "id": room.id,
             "code": room.code,
             "name": room.name,
+            "gameType": room.game_type,
             "phase": room.phase,
             "hostId": room.host_id,
             "roundsTotal": room.rounds_total,
             "secondsPerQuestion": room.seconds_per_question,
             "questionNumber": room.q_index + 1,
-            "question": question.payload() if question and room.phase != "lobby" else None,
+            # Exactly one of these is ever populated, decided by `gameType`.
+            "question": question.payload() if question and playing else None,
             "answerIndex": question.answer if question and reveal else None,
+            "board": room.board.payload() if room.board and playing else None,
+            "boardAnswer": room.board.answer_payload() if room.board and reveal else None,
+            # Who holds which combination. Public by design: seeing other players
+            # commit *is* the game, and it's what they're racing over.
+            "claims": [
+                {
+                    "human": human,
+                    "dog": dog,
+                    "playerId": player_id,
+                    "name": self._member_name(room, player_id),
+                }
+                for (human, dog), player_id in room.claims.items()
+            ],
             "endsAt": room.ends_at_ms,
             "serverNow": now_ms(),
             "players": [
@@ -229,14 +331,22 @@ class RoomRegistry:
                     "streak": m.streak,
                     "connected": m.connected,
                     "isHost": m.player_id == room.host_id,
-                    "answered": m.answer is not None,
+                    # "Has nothing left to do this round", whichever game it is.
+                    "answered": m.done_with_round,
+                    "submitted": m.submitted,
                     "lastAward": m.last_award,
-                    # Correctness is only public once the question is closed.
+                    # Correctness is only public once the round is closed.
                     "lastCorrect": m.last_correct if reveal else None,
+                    "lastRoundCorrect": m.last_round_correct if reveal else 0,
                 }
                 for m in room.standings()
             ],
         }
+
+    @staticmethod
+    def _member_name(room: Room, player_id: str) -> str:
+        member = room.members.get(player_id)
+        return member.name if member else "—"
 
     # ------------------------------------------------------------ membership
 
@@ -267,11 +377,17 @@ class RoomRegistry:
         if member is None:
             return
         if permanent:
+            # Someone who has left for good must not keep combinations hostage.
+            # A dropped socket is different: their seat and their claims are held,
+            # because they're probably mid-refresh and the round still ends
+            # without them.
+            for human_slot in list(member.pairs):
+                self._drop(room, member, human_slot)
             room.members.pop(player_id, None)
         else:
             member.connected = False
 
-        # An in-progress question shouldn't wait on someone who just walked out.
+        # An in-progress round shouldn't wait on someone who just walked out.
         self._check_all_answered(room)
 
         if member.player_id == room.host_id:
@@ -304,16 +420,35 @@ class RoomRegistry:
 
     # -------------------------------------------------------------- settings
 
-    async def set_options(self, room: Room, rounds_total: int | None, seconds: int | None) -> None:
+    async def set_options(
+        self,
+        room: Room,
+        rounds_total: int | None,
+        seconds: int | None,
+        game_type: str | None = None,
+    ) -> None:
         if room.phase not in ("lobby", "over"):
             raise ValueError("Settings are locked once a game starts.")
+        if game_type is not None and game_type != room.game_type:
+            if game_type not in GAME_TYPES:
+                raise ValueError("Pick either Spot the Double or Mix & Match.")
+            room.game_type = game_type
+            # The two types keep different clocks, so carrying the old value over
+            # would leave a match room with an unplayable 10 seconds a board.
+            room.seconds_per_question = (
+                MATCH_DEFAULT_SECONDS if room.is_match else DEFAULT_SECONDS
+            )
+            room.rounds_total = MATCH_DEFAULT_ROUNDS if room.is_match else DEFAULT_ROUNDS
         if rounds_total is not None:
             if rounds_total not in ROUNDS_CHOICES:
                 raise ValueError("Rounds must be between 5 and 20.")
             room.rounds_total = rounds_total
         if seconds is not None:
-            if seconds not in SECONDS_CHOICES:
-                raise ValueError("Seconds per question must be 10, 15 or 20.")
+            allowed = seconds_choices(room.game_type)
+            if seconds not in allowed:
+                raise ValueError(
+                    "Seconds per round must be " + " or ".join(str(s) for s in allowed) + "."
+                )
             room.seconds_per_question = seconds
         await self.broadcast_state(room)
 
@@ -332,6 +467,8 @@ class RoomRegistry:
         room.phase = "lobby"
         room.q_index = -1
         room.questions = []
+        room.board = None
+        room.claims.clear()
         room.ends_at_ms = None
         for member in room.members.values():
             member.reset_for_game()
@@ -341,24 +478,20 @@ class RoomRegistry:
         try:
             for member in room.members.values():
                 member.reset_for_game()
-            room.questions = rounds.build_questions(
-                room.rounds_total, random.Random(), options_per=OPTIONS_PER_QUESTION
-            )
             room.q_index = -1
+            room.questions = []
+            room.board = None
+            room.claims.clear()
 
             room.phase = "countdown"
             room.ends_at_ms = now_ms() + COUNTDOWN_SECONDS * 1000
             await self.broadcast_state(room)
             await asyncio.sleep(COUNTDOWN_SECONDS)
 
-            for index in range(len(room.questions)):
-                if not room.connected_members:
-                    log.info("abandoning game in room %s: everyone left", room.code)
-                    return
-                await self._ask(room, index)
-                await self._reveal(room)
-
-            await self._finish(room)
+            if room.is_match:
+                await self._run_match(room)
+            else:
+                await self._run_double(room)
         except asyncio.CancelledError:
             raise
         except Exception:  # a crash here would silently freeze the room
@@ -368,6 +501,32 @@ class RoomRegistry:
                 room,
                 {"type": "error", "payload": {"message": "The game hit a problem and stopped."}},
             )
+
+    async def _run_double(self, room: Room) -> None:
+        room.questions = rounds.build_questions(
+            room.rounds_total, random.Random(), options_per=OPTIONS_PER_QUESTION
+        )
+        for index in range(len(room.questions)):
+            if not room.connected_members:
+                log.info("abandoning game in room %s: everyone left", room.code)
+                return
+            await self._ask(room, index)
+            await self._reveal(room)
+        await self._finish(room)
+
+    async def _run_match(self, room: Room) -> None:
+        rng = random.Random()
+        for index in range(room.rounds_total):
+            if not room.connected_members:
+                log.info("abandoning game in room %s: everyone left", room.code)
+                return
+            dealt = boards.build_board(rng)
+            if dealt is None:  # the content pool ran dry; end early rather than hang
+                log.warning("room %s could not deal a board", room.code)
+                break
+            await self._open_board(room, index, dealt)
+            await self._reveal_board(room)
+        await self._finish(room)
 
     async def _ask(self, room: Room, index: int) -> None:
         room.q_index = index
@@ -425,6 +584,77 @@ class RoomRegistry:
         )
         await asyncio.sleep(REVEAL_SECONDS)
 
+    # ---------------------------------------------------------- match rounds
+
+    async def _open_board(self, room: Room, index: int, dealt: Board) -> None:
+        room.q_index = index
+        room.phase = "question"
+        room.board = dealt
+        room.claims.clear()
+        room.all_answered.clear()
+        for member in room.members.values():
+            member.reset_for_question()
+
+        duration = room.seconds_per_question
+        room.ends_at_ms = now_ms() + duration * 1000
+        await self.broadcast_state(room)
+
+        # Close at the deadline, or as soon as everyone still here has submitted.
+        try:
+            await asyncio.wait_for(room.all_answered.wait(), timeout=duration)
+        except asyncio.TimeoutError:
+            pass
+
+    async def _reveal_board(self, room: Room) -> None:
+        dealt = room.board
+        if dealt is None:
+            return
+        room.phase = "reveal"
+        window = room.seconds_per_question * 1000
+        deadline = room.ends_at_ms  # the round's, before it becomes the reveal's
+
+        for member in room.members.values():
+            # Whatever they were still holding when the clock ran out is their answer.
+            member.submitted = True
+            award = 0
+            right = 0
+            for human_slot, dog_slot in member.pairs.items():
+                if dealt.answer.get(human_slot) != dog_slot:
+                    continue
+                right += 1
+                remaining = 0.0
+                claimed_at = member.claimed_at.get(human_slot)
+                if claimed_at is not None and deadline is not None and window > 0:
+                    remaining = (deadline - claimed_at * 1000) / window
+                award += _pair_award(remaining)
+
+            if boards.is_perfect(dealt, member.pairs):
+                award += MATCH_PERFECT_BONUS
+                member.streak += 1
+                member.longest_streak = max(member.longest_streak, member.streak)
+            else:
+                # The streak is for clean boards, so three of four breaks it.
+                member.streak = 0
+
+            member.correct += right
+            member.last_round_correct = right
+            member.last_award = award
+            member.last_correct = right > 0
+            member.score += award
+
+        room.ends_at_ms = now_ms() + REVEAL_SECONDS * 1000
+        await self.broadcast(
+            room,
+            {
+                "type": "question_end",
+                "payload": {
+                    **self.state(room),
+                    "isLastQuestion": room.q_index + 1 >= room.rounds_total,
+                },
+            },
+        )
+        await asyncio.sleep(REVEAL_SECONDS)
+
     async def _finish(self, room: Room) -> None:
         room.phase = "over"
         room.ends_at_ms = None
@@ -437,6 +667,7 @@ class RoomRegistry:
                 member.score,
                 member.longest_streak,
                 won=member.score == best and best > 0,
+                board=room.leaderboard_name,
             )
         await self.broadcast(
             room,
@@ -444,7 +675,7 @@ class RoomRegistry:
                 "type": "game_over",
                 "payload": {
                     **self.state(room),
-                    "leaderboard": store.top(store.BOARD_MULTIPLAYER),
+                    "leaderboard": store.top(room.leaderboard_name),
                 },
             },
         )
@@ -452,10 +683,15 @@ class RoomRegistry:
     # -------------------------------------------------------------- answers
 
     def _check_all_answered(self, room: Room) -> None:
+        """Close the round early once nobody still here has anything to do.
+
+        Works for both game types: `done_with_round` is "answered" for a double
+        room and "submitted" for a match room.
+        """
         if room.phase != "question":
             return
         here = room.connected_members
-        if here and all(m.answer is not None for m in here):
+        if here and all(m.done_with_round for m in here):
             room.all_answered.set()
 
     async def answer(self, room: Room, player_id: str, question_index: int, choice: int) -> None:
@@ -496,3 +732,99 @@ class RoomRegistry:
 
     async def _reject(self, player_id: str, message: str) -> None:
         await self.send(player_id, {"type": "answer_rejected", "payload": {"message": message}})
+
+    # ---------------------------------------------------------- match claims
+
+    def _match_member(self, room: Room, player_id: str) -> Member:
+        """The common gate for every claim action. Raises with a reason to show."""
+        if not room.is_match:
+            raise ValueError("This room isn't playing Mix & Match.")
+        member = room.members.get(player_id)
+        if member is None:
+            raise ValueError("You're not in this room.")
+        if room.phase != "question" or room.board is None:
+            raise ValueError("The board isn't open.")
+        if member.submitted:
+            raise ValueError("You've already submitted this board.")
+        if room.ends_at_ms is not None and time.time() * 1000 > room.ends_at_ms + 250:
+            raise ValueError("Too late — the round is over.")
+        return member
+
+    async def claim(self, room: Room, player_id: str, human_slot: int, dog_slot: int) -> None:
+        """Take a human↔dog combination, exclusively, for this player.
+
+        **This is the contradiction guard** (ProjectPlan 2.10). Everything from the
+        "is it free" test to writing the claim happens with no ``await`` in
+        between, so on a single-threaded event loop it is atomic: of two players
+        who click the same combination in the same instant, exactly one is holding
+        it afterwards and the other is told who beat them.
+        """
+        member = self._match_member(room, player_id)
+        assert room.board is not None  # guaranteed by _match_member
+
+        if not 0 <= human_slot < len(room.board.humans):
+            raise ValueError("That person isn't on the board.")
+        if not 0 <= dog_slot < len(room.board.dogs):
+            raise ValueError("That dog isn't on the board.")
+
+        holder = room.claims.get((human_slot, dog_slot))
+        if holder is not None and holder != player_id:
+            await self.send(
+                player_id,
+                {
+                    "type": "claim_rejected",
+                    "payload": {
+                        "human": human_slot,
+                        "dog": dog_slot,
+                        "message": f"{self._member_name(room, holder)} claimed that pair first.",
+                    },
+                },
+            )
+            return
+        if member.pairs.get(human_slot) == dog_slot:
+            return  # already mine; a double-tap is not an error
+
+        # Within my own board a human takes one dog and a dog takes one human, so
+        # this claim displaces at most two of my own — released, not stolen.
+        self._drop(room, member, human_slot)
+        for other_human, other_dog in list(member.pairs.items()):
+            if other_dog == dog_slot:
+                self._drop(room, member, other_human)
+
+        member.pairs[human_slot] = dog_slot
+        member.claimed_at[human_slot] = time.time()
+        room.claims[(human_slot, dog_slot)] = player_id
+
+        await self.send(
+            player_id,
+            {"type": "claim_ack", "payload": {"human": human_slot, "dog": dog_slot}},
+        )
+        await self.broadcast_state(room)
+
+    async def release(self, room: Room, player_id: str, human_slot: int) -> None:
+        """Give a combination back to the table so anyone can take it."""
+        member = self._match_member(room, player_id)
+        if human_slot not in member.pairs:
+            return  # nothing to release; not worth an error
+        self._drop(room, member, human_slot)
+        await self.broadcast_state(room)
+
+    def _drop(self, room: Room, member: Member, human_slot: int) -> None:
+        """Undo one of this member's pairings. Never touches anyone else's."""
+        dog_slot = member.pairs.pop(human_slot, None)
+        member.claimed_at.pop(human_slot, None)
+        if dog_slot is None:
+            return
+        if room.claims.get((human_slot, dog_slot)) == member.player_id:
+            room.claims.pop((human_slot, dog_slot), None)
+
+    async def submit(self, room: Room, player_id: str) -> None:
+        """Freeze this player's board. Their claims stand until the reveal."""
+        member = self._match_member(room, player_id)
+        member.submitted = True
+        await self.send(
+            player_id,
+            {"type": "submit_ack", "payload": {"pairs": member.pairs}},
+        )
+        await self.broadcast_state(room)
+        self._check_all_answered(room)

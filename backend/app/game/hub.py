@@ -76,6 +76,9 @@ class Hub:
             "set_options": self._on_set_options,
             "start": self._on_start,
             "answer": self._on_answer,
+            "claim": self._on_claim,
+            "release": self._on_release,
+            "submit": self._on_submit,
             "again": self._on_again,
             "ping": self._on_ping,
         }.get(kind)
@@ -128,10 +131,12 @@ class Hub:
         room = self._require_host(player)
         rounds_total = payload.get("roundsTotal")
         seconds = payload.get("secondsPerQuestion")
+        game_type = payload.get("gameType")
         await self.rooms.set_options(
             room,
             int(rounds_total) if rounds_total is not None else None,
             int(seconds) if seconds is not None else None,
+            str(game_type) if game_type is not None else None,
         )
 
     async def _on_start(self, player: Player, payload: dict) -> None:
@@ -140,16 +145,36 @@ class Hub:
     async def _on_again(self, player: Player, payload: dict) -> None:
         await self.rooms.back_to_lobby(self._require_host(player))
 
-    async def _on_answer(self, player: Player, payload: dict) -> None:
+    def _my_room(self, player: Player):
         room = self.rooms.find_room_of(player.id)
         if room is None:
             raise ValueError("You're not in a room.")
+        return room
+
+    async def _on_answer(self, player: Player, payload: dict) -> None:
+        room = self._my_room(player)
         await self.rooms.answer(
             room,
             player.id,
             int(payload.get("questionIndex", -1)),
             int(payload.get("choice", -1)),
         )
+
+    async def _on_claim(self, player: Player, payload: dict) -> None:
+        await self.rooms.claim(
+            self._my_room(player),
+            player.id,
+            int(payload.get("humanSlot", -1)),
+            int(payload.get("dogSlot", -1)),
+        )
+
+    async def _on_release(self, player: Player, payload: dict) -> None:
+        await self.rooms.release(
+            self._my_room(player), player.id, int(payload.get("humanSlot", -1))
+        )
+
+    async def _on_submit(self, player: Player, payload: dict) -> None:
+        await self.rooms.submit(self._my_room(player), player.id)
 
     async def _on_ping(self, player: Player, payload: dict) -> None:
         # Doubles as the clock-sync probe: the client compares serverNow to its

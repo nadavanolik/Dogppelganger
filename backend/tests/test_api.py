@@ -5,7 +5,7 @@ validation, the socket handshake and the identity check are all exercised for
 real — only the network hop is simulated.
 """
 import pytest
-from conftest import correct_choice
+from conftest import correct_choice, perfect_pairs
 from starlette.websockets import WebSocketDisconnect
 
 
@@ -31,10 +31,40 @@ def room(client):
 # ------------------------------------------------------------------ REST
 
 
+@pytest.fixture
+def match_room(client):
+    res = client.post(
+        "/api/game/rooms",
+        json={
+            "playerId": "http_a",
+            "playerName": "ilona",
+            "name": "Match room",
+            "gameType": "match",
+        },
+    )
+    assert res.status_code == 201
+    return res.json()
+
+
 def test_creating_a_room_returns_its_code(room):
     assert len(room["code"]) == 4
     assert room["phase"] == "lobby"
+    assert room["gameType"] == "double", "the Kahoot game stays the default"
     assert room["playerCount"] == 0, "the host joins over the socket, like everyone else"
+
+
+def test_a_match_room_is_created_with_its_own_defaults(match_room):
+    assert match_room["gameType"] == "match"
+    assert match_room["secondsPerQuestion"] == 45, "a four-pair board needs longer"
+    assert match_room["roundsTotal"] == 5
+
+
+def test_an_unknown_game_type_is_refused(client):
+    res = client.post(
+        "/api/game/rooms",
+        json={"playerId": "http_a", "playerName": "ilona", "gameType": "kahoot"},
+    )
+    assert res.status_code == 422
 
 
 def test_a_created_room_shows_up_in_the_public_list(client, room):
@@ -42,6 +72,8 @@ def test_a_created_room_shows_up_in_the_public_list(client, room):
 
     assert any(r["id"] == room["id"] for r in listing["rooms"])
     assert listing["options"]["seconds"] == [10, 15, 20]
+    assert listing["options"]["matchSeconds"] == [30, 45, 60]
+    assert listing["options"]["gameTypes"] == ["double", "match"]
     assert listing["options"]["rounds"][0] == 5
 
 
@@ -96,7 +128,46 @@ def test_a_bogus_run_token_is_a_404(client):
     assert "start a new one" in res.json()["detail"]
 
 
-@pytest.mark.parametrize("board", ["solo", "multiplayer"])
+def test_a_solo_match_run_can_be_played_over_rest(client):
+    run = client.post(
+        "/api/game/solo/match/start", json={"playerId": "http_m", "playerName": "nadav"}
+    ).json()
+    assert run["lives"] == 3
+    assert len(run["board"]["humans"]) == 4
+
+    result = client.post(
+        "/api/game/solo/match/submit",
+        json={"runToken": run["runToken"], "pairs": perfect_pairs(run["board"])},
+    ).json()
+
+    assert result["wasPerfect"] is True
+    assert result["score"] == 4
+    assert result["lives"] == 3
+    assert result["board"] is not None
+
+
+def test_a_solo_match_board_rejects_a_shared_dog(client):
+    run = client.post(
+        "/api/game/solo/match/start", json={"playerId": "http_m", "playerName": "nadav"}
+    ).json()
+    res = client.post(
+        "/api/game/solo/match/submit",
+        json={"runToken": run["runToken"], "pairs": {"0": 1, "2": 1}},
+    )
+
+    assert res.status_code == 422
+    assert "one person" in res.json()["detail"]
+
+
+def test_a_bogus_match_token_is_a_404(client):
+    res = client.post("/api/game/solo/match/submit", json={"runToken": "xxx", "pairs": {}})
+
+    assert res.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "board", ["solo", "multiplayer", "solo_match", "multiplayer_match"]
+)
 def test_both_leaderboards_serve(client, board):
     res = client.get(f"/api/game/leaderboard/{board}").json()
 
@@ -169,6 +240,55 @@ def test_two_players_can_play_a_game_over_the_socket(client, room, fast_pacing):
             assert over is not None
             assert over["payload"]["players"][0]["score"] > 0
             assert "leaderboard" in over["payload"], "the all-time board rides along"
+
+
+def test_two_players_race_for_the_same_pair_over_the_socket(client, match_room, fast_pacing):
+    """The end-to-end version of ProjectPlan 2.10: one board, two players, one
+    combination — and the server deciding who gets it."""
+    with client.websocket_connect("/api/game/ws?playerId=http_a&name=ilona") as a:
+        with client.websocket_connect("/api/game/ws?playerId=http_b&name=michal") as b:
+            a.receive_json()
+            b.receive_json()
+            a.send_json({"type": "game_join", "payload": {"roomId": match_room["id"]}})
+            b.send_json({"type": "game_join", "payload": {"code": match_room["code"]}})
+            read_until(b, lambda m: m["type"] == "room_state" and len(m["payload"]["players"]) == 2)
+
+            a.send_json({"type": "game_start", "payload": {}})
+            opened = read_until(
+                a, lambda m: m["type"] == "room_state" and m["payload"]["phase"] == "question"
+            )
+            assert opened is not None, "the board never opened"
+            board = opened["payload"]["board"]
+            assert len(board["humans"]) == 4 and len(board["dogs"]) == 4
+            assert opened["payload"]["boardAnswer"] is None, "no peeking mid-round"
+
+            answers = perfect_pairs(board)
+            contested = {"humanSlot": 0, "dogSlot": answers[0]}
+
+            a.send_json({"type": "game_claim", "payload": contested})
+            assert read_until(a, lambda m: m["type"] == "claim_ack") is not None
+
+            # b goes for the same combination and is told who beat them.
+            read_until(b, lambda m: m["type"] == "room_state" and m["payload"]["claims"])
+            b.send_json({"type": "game_claim", "payload": contested})
+            rejected = read_until(b, lambda m: m["type"] == "claim_rejected")
+            assert rejected is not None
+            assert "ilona" in rejected["payload"]["message"]
+
+            # The human is still playable for b — just not with that dog.
+            other = (answers[0] + 1) % 4
+            b.send_json({"type": "game_claim", "payload": {"humanSlot": 0, "dogSlot": other}})
+            assert read_until(b, lambda m: m["type"] == "claim_ack") is not None
+
+            a.send_json({"type": "game_submit", "payload": {}})
+            b.send_json({"type": "game_submit", "payload": {}})
+
+            end = read_until(a, lambda m: m["type"] == "question_end")
+            assert end is not None, "the round never closed"
+            assert end["payload"]["boardAnswer"] is not None, "the key comes out at the reveal"
+            scores = {p["playerId"]: p["lastAward"] for p in end["payload"]["players"]}
+            assert scores["http_a"] > 0, "a right pair scores"
+            assert scores["http_b"] == 0, "a wrong pair doesn't"
 
 
 def test_the_clock_is_the_servers(client, room):

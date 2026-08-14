@@ -1,4 +1,12 @@
-"""The game: single-player Streak Survival and Kahoot-style multiplayer rooms.
+"""The games: two modes, each playable solo or in a live multiplayer room.
+
+* **Spot the Double** — one human, several dogs, pick the right one. Solo it's
+  Streak Survival (``solo.py``, no timer, three lives); in a room it's a
+  Kahoot-style race where answering sooner scores more.
+* **Mix & Match** — four humans, four dogs, link them up (``board.py``). Solo it's
+  board after board on three lives (``solo_match.py``); in a room every pairing
+  *claims that combination* exclusively and live, which is the shared mutable
+  state ProjectPlan 2.10 asks the server to arbitrate. See ``rooms.py``.
 
 This package is deliberately self-contained — it imports nothing from
 ``app.models`` or ``app.database``, so it neither depends on nor conflicts with

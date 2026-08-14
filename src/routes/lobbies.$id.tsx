@@ -5,8 +5,10 @@ import { AppShell, RequireAuth } from "@/components/AppShell";
 import { DogOption, QuestionPrompt } from "@/components/game/DogOption";
 import { HumanFace } from "@/components/game/HumanFace";
 import { Leaderboard } from "@/components/game/Leaderboard";
+import { MatchBoard } from "@/components/game/MatchBoard";
 import { Podium, Scoreboard } from "@/components/game/Scoreboard";
 import { TimerBar } from "@/components/game/TimerBar";
+import type { GameType } from "@/lib/gameApi";
 import { useGameRoom } from "@/lib/gameSocket";
 import { useStore } from "@/lib/store";
 import { useSecondsLeft } from "@/lib/useCountdown";
@@ -16,7 +18,13 @@ export default Room;
 const OPTION_LABELS = ["1", "2", "3", "4"];
 const ROUND_CHOICES = [5, 8, 10, 15, 20];
 const SECOND_CHOICES = [10, 15, 20];
+const MATCH_SECOND_CHOICES = [30, 45, 60];
 const NOTICE_MS = 3500;
+
+const GAME_LABEL: Record<GameType, string> = {
+  double: "Spot the double",
+  match: "Mix & match",
+};
 
 function Room() {
   return (
@@ -34,7 +42,7 @@ function Inner() {
   const me = store.user!;
   const navigate = useNavigate();
 
-  const { status, state, notice, clearNotice, serverNow, send } = useGameRoom({
+  const { status, state, lastEvent, notice, clearNotice, serverNow, send } = useGameRoom({
     playerId: me.id,
     playerName: me.username,
     roomId: id,
@@ -43,7 +51,31 @@ function Inner() {
   // What *I* clicked. The server decides whether it counted; this only stops me
   // hammering the same question and shows my choice back to me.
   const [picked, setPicked] = useState<number | null>(null);
-  useEffect(() => setPicked(null), [state?.questionNumber]);
+  // Claims I've sent that the server hasn't ruled on yet, drawn dashed. Cleared
+  // by the ack or the rejection — never assumed to have worked.
+  const [pending, setPending] = useState<Record<number, number>>({});
+
+  // Only on a new round: `picked` has to survive into the reveal, or the ❌ and
+  // the red ring on the answer you actually gave never get drawn.
+  useEffect(() => {
+    setPicked(null);
+    setPending({});
+  }, [state?.questionNumber]);
+
+  // Anything still in flight is moot the moment the round closes.
+  useEffect(() => {
+    if (state?.phase !== "question") setPending({});
+  }, [state?.phase]);
+
+  useEffect(() => {
+    if (lastEvent?.type !== "claim_ack" && lastEvent?.type !== "claim_rejected") return;
+    const human = Number(lastEvent.payload.human);
+    setPending((current) => {
+      const next = { ...current };
+      delete next[human];
+      return next;
+    });
+  }, [lastEvent]);
 
   useEffect(() => {
     if (!notice) return;
@@ -53,6 +85,28 @@ function Inner() {
 
   const phase = state?.phase;
   const question = state?.question ?? null;
+  const board = state?.board ?? null;
+  const isMatch = state?.gameType === "match";
+
+  const claim = useCallback(
+    (human: number, dog: number) => {
+      setPending((current) => ({ ...current, [human]: dog }));
+      send("claim", { humanSlot: human, dogSlot: dog });
+    },
+    [send],
+  );
+
+  const release = useCallback(
+    (human: number) => {
+      setPending((current) => {
+        const next = { ...current };
+        delete next[human];
+        return next;
+      });
+      send("release", { humanSlot: human });
+    },
+    [send],
+  );
 
   const answer = useCallback(
     (choice: number) => {
@@ -63,8 +117,9 @@ function Inner() {
     [phase, question, picked, send],
   );
 
+  // Mix & Match brings its own keys; this is the four-option question's.
   useEffect(() => {
-    if (phase !== "question" || !question || picked !== null) return;
+    if (isMatch || phase !== "question" || !question || picked !== null) return;
     const onKey = (e: KeyboardEvent) => {
       const index = OPTION_LABELS.indexOf(e.key);
       if (index >= 0 && index < question.options.length) {
@@ -74,7 +129,7 @@ function Inner() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, question, picked, answer]);
+  }, [isMatch, phase, question, picked, answer]);
 
   const leave = () => {
     send("leave");
@@ -82,6 +137,8 @@ function Inner() {
   };
 
   const isHost = state?.hostId === me.id;
+  const meRow = state?.players.find((p) => p.playerId === me.id);
+  const submitted = state?.players.filter((p) => p.submitted).length ?? 0;
   const countdown = useSecondsLeft(
     phase === "countdown" ? (state?.endsAt ?? null) : null,
     serverNow,
@@ -118,9 +175,13 @@ function Inner() {
                 Round {state.questionNumber} / {state.roundsTotal}
               </div>
             )}
-            <button onClick={leave} className="btn-pop btn-pop-hover bg-card px-4 py-2 text-sm">
-              Leave
-            </button>
+            {/* The game-over card has its own "Back to lobbies", which does
+                exactly this — no need to offer it twice on the same screen. */}
+            {phase !== "over" && (
+              <button onClick={leave} className="btn-pop btn-pop-hover bg-card px-4 py-2 text-sm">
+                Leave
+              </button>
+            )}
           </div>
         </header>
 
@@ -146,9 +207,28 @@ function Inner() {
             <p className="text-muted-foreground mt-2">
               Others join from <strong>Multiplayer</strong> with this code — phones included.
             </p>
+            <p className="mt-3 text-sm font-bold">
+              {isMatch
+                ? "🔗 Mix & match — four people, four dogs. Pairing one claims it: nobody else can use that combination, but both tiles stay in play. You won't find out who was right until the round ends."
+                : "🎯 Spot the double — one person, four dogs, everyone answers at once. Faster is worth more."}
+            </p>
 
             {isHost ? (
               <div className="mt-6 space-y-4">
+                <div className="flex flex-wrap gap-2 justify-center">
+                  {(["double", "match"] as GameType[]).map((type) => (
+                    <button
+                      key={type}
+                      onClick={() => send("set_options", { gameType: type })}
+                      className={`btn-pop btn-pop-hover px-4 py-2 text-sm ${
+                        state.gameType === type ? "bg-primary text-primary-foreground" : "bg-card"
+                      }`}
+                    >
+                      {type === "match" ? "🔗 " : "🎯 "}
+                      {GAME_LABEL[type]}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex flex-wrap gap-4 justify-center">
                   <Chooser
                     label="Rounds"
@@ -157,8 +237,8 @@ function Inner() {
                     onPick={(v) => send("set_options", { roundsTotal: v })}
                   />
                   <Chooser
-                    label="Seconds each"
-                    values={SECOND_CHOICES}
+                    label={isMatch ? "Seconds a board" : "Seconds each"}
+                    values={isMatch ? MATCH_SECOND_CHOICES : SECOND_CHOICES}
                     current={state.secondsPerQuestion}
                     onPick={(v) => send("set_options", { secondsPerQuestion: v })}
                   />
@@ -183,7 +263,59 @@ function Inner() {
           </div>
         )}
 
-        {(phase === "question" || phase === "reveal") && question && (
+        {(phase === "question" || phase === "reveal") && isMatch && board && (
+          <div className="card-pop p-4 sm:p-6">
+            {phase === "question" ? (
+              <TimerBar
+                endsAt={state.endsAt}
+                durationMs={state.secondsPerQuestion * 1000}
+                serverNow={serverNow}
+                label={
+                  meRow?.submitted
+                    ? `Locked in — ${submitted} of ${state.players.length} done`
+                    : "Tap a person, then a dog"
+                }
+              />
+            ) : (
+              <div className="text-center font-display text-2xl font-black">
+                {(meRow?.lastRoundCorrect ?? 0) > 0
+                  ? `${meRow?.lastRoundCorrect} right — +${meRow?.lastAward}`
+                  : "None right that time"}
+              </div>
+            )}
+
+            <div className="mt-5">
+              <MatchBoard
+                board={board}
+                claims={state.claims}
+                meId={me.id}
+                answer={state.boardAnswer}
+                pending={pending}
+                disabled={phase === "reveal" || !!meRow?.submitted}
+                onClaim={claim}
+                onRelease={release}
+              />
+            </div>
+
+            {phase === "question" && (
+              <div className="mt-5 flex flex-col items-center gap-2">
+                <button
+                  onClick={() => send("submit")}
+                  disabled={!!meRow?.submitted}
+                  className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-8 py-3 disabled:opacity-50"
+                >
+                  {meRow?.submitted ? "Waiting for the others…" : "Lock it in →"}
+                </button>
+                <p className="text-center text-xs text-muted-foreground">
+                  Change your mind as often as you like until you submit. Claiming early is worth
+                  more — but nobody finds out who was right until the round ends.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {(phase === "question" || phase === "reveal") && !isMatch && question && (
           <div className="card-pop p-6">
             {phase === "question" ? (
               <TimerBar
@@ -257,9 +389,12 @@ function Inner() {
                   Waiting for the host to run it back…
                 </span>
               )}
-              <Link to="/lobbies" className="btn-pop btn-pop-hover bg-card px-6 py-3">
+              {/* A button, not a Link: this is now the only way out of a
+                  finished game, so it has to actually give up the seat rather
+                  than leave the server holding it for the reconnect grace. */}
+              <button onClick={leave} className="btn-pop btn-pop-hover bg-card px-6 py-3">
                 Back to lobbies
-              </Link>
+              </button>
             </div>
           </div>
         )}
@@ -267,9 +402,9 @@ function Inner() {
         {phase === "over" && state.leaderboard && (
           <Leaderboard
             entries={state.leaderboard}
-            board="multiplayer"
+            board={isMatch ? "multiplayer_match" : "multiplayer"}
             meId={me.id}
-            title="🏅 Most wins, all-time"
+            title={`🏅 Most wins — ${GAME_LABEL[state.gameType].toLowerCase()}`}
           />
         )}
       </div>

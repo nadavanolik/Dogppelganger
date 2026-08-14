@@ -12,6 +12,9 @@ export default Lobbies;
 const POLL_MS = 3000;
 const CODE_LENGTH = 4;
 
+/** How many rows each board shows before you ask for the rest. */
+const BOARD_PREVIEW = 3;
+
 function Lobbies() {
   return (
     <AppShell>
@@ -28,7 +31,8 @@ function Inner() {
   const navigate = useNavigate();
 
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
-  const [board, setBoard] = useState<LeaderEntry[]>([]);
+  const [matchBoard, setMatchBoard] = useState<LeaderEntry[]>([]);
+  const [doubleBoard, setDoubleBoard] = useState<LeaderEntry[]>([]);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -53,17 +57,25 @@ function Inner() {
     return () => window.clearInterval(id);
   }, [refresh]);
 
+  // Each game keeps its own board — points in one aren't points in the other —
+  // so both are shown rather than ranked against each other.
   useEffect(() => {
     gameApi
+      .leaderboard("multiplayer_match")
+      .then((res) => setMatchBoard(res.entries))
+      .catch(() => setMatchBoard([]));
+    gameApi
       .leaderboard("multiplayer")
-      .then((res) => setBoard(res.entries))
-      .catch(() => setBoard([]));
+      .then((res) => setDoubleBoard(res.entries))
+      .catch(() => setDoubleBoard([]));
   }, []);
 
   const create = async () => {
     setBusy(true);
     setError(null);
     try {
+      // No game type here on purpose: the host picks it inside the room, where
+      // the rounds and the clock are set too.
       const room = await gameApi.createRoom(me.id, me.username, name.trim());
       navigate(`/lobbies/${room.id}`);
     } catch (err) {
@@ -92,7 +104,7 @@ function Inner() {
         <header>
           <h1 className="font-display text-4xl md:text-5xl font-black">Multiplayer</h1>
           <p className="text-muted-foreground">
-            Everyone gets the same question at the same moment. Answer faster, score higher.
+            Two games, same room. Everyone plays at once and sees each other move.
           </p>
         </header>
 
@@ -133,7 +145,7 @@ function Inner() {
           <div className="card-pop p-5">
             <h2 className="font-display text-xl font-black">Host a room</h2>
             <p className="text-xs text-muted-foreground mt-1">
-              You pick the number of rounds and the clock.
+              Name it, then pick the game, the rounds and the clock inside.
             </p>
             <div className="mt-3 flex gap-2">
               <input
@@ -178,11 +190,12 @@ function Inner() {
             )}
             {rooms?.map((room) => (
               <div key={room.id} className="card-pop-sm p-4 flex items-center gap-3">
-                <div className="text-4xl">🎪</div>
+                <div className="text-4xl">{room.gameType === "match" ? "🔗" : "🎯"}</div>
                 <div className="flex-1 min-w-0">
                   <div className="font-display text-xl font-bold truncate">{room.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    hosted by @{room.hostName} · {room.playerCount} player
+                    {room.gameType === "match" ? "Mix & match" : "Spot the double"} · hosted by @
+                    {room.hostName} · {room.playerCount} player
                     {room.playerCount === 1 ? "" : "s"} · {room.roundsTotal} rounds ·{" "}
                     {room.secondsPerQuestion}s{room.phase === "over" && " · just finished"}
                   </div>
@@ -202,13 +215,24 @@ function Inner() {
         </section>
       </div>
 
-      <Leaderboard
-        entries={board}
-        board="multiplayer"
-        meId={me.id}
-        title="🏅 Most wins"
-        empty="No games finished yet."
-      />
+      <div className="space-y-4">
+        <Leaderboard
+          entries={matchBoard}
+          board="multiplayer_match"
+          meId={me.id}
+          title="🔗 Mix & match"
+          collapsedTo={BOARD_PREVIEW}
+          empty="No games finished yet."
+        />
+        <Leaderboard
+          entries={doubleBoard}
+          board="multiplayer"
+          meId={me.id}
+          title="🎯 Spot the double"
+          collapsedTo={BOARD_PREVIEW}
+          empty="No games finished yet."
+        />
+      </div>
     </div>
   );
 }

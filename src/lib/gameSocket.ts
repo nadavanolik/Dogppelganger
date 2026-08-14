@@ -109,6 +109,12 @@ export function useGameRoom(opts: {
           case "answer_rejected":
             setNotice(String(payload.message ?? "That didn't work."));
             break;
+          case "claim_rejected":
+            // Both: the player needs telling, *and* the board needs to drop the
+            // pending line it drew for this tap.
+            setNotice(String(payload.message ?? "Someone got there first."));
+            setLastEvent(msg);
+            break;
           default:
             setLastEvent(msg);
         }

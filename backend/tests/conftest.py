@@ -23,7 +23,7 @@ atexit.register(lambda: shutil.rmtree(_TMP, ignore_errors=True))
 os.environ["GAME_DATA_DIR"] = str(Path(_TMP) / "gamedata")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(_TMP).as_posix()}/test.db")
 
-from app.game import rooms, solo, store  # noqa: E402  (must follow the env setup)
+from app.game import rooms, solo, solo_match, store  # noqa: E402  (must follow the env setup)
 from app.game.hub import Hub, Player  # noqa: E402
 
 
@@ -39,6 +39,7 @@ def clean_game_state():
 
     def reset():
         solo._runs.clear()
+        solo_match._runs.clear()
         for board in store.BOARDS:
             store._state.boards[board] = {}
         # The API tests go through the module-level hub, so drop its rooms too.
@@ -144,6 +145,38 @@ async def in_play(lobby):
 
 
 @pytest.fixture
+async def match_lobby(table, fast_pacing):
+    """A Mix & Match room with all three players in it, still in the lobby."""
+    hub, clients = table
+    room = hub.rooms.create("Mix it up", "p_a", "ilona", rooms.GAME_MATCH)
+    for client in clients.values():
+        await client.send("join", roomId=room.id)
+    for client in clients.values():
+        client.drain()
+
+    yield hub, clients, room
+
+    if room.task and not room.task.done():
+        room.task.cancel()
+
+
+@pytest.fixture
+async def match_in_play(match_lobby):
+    """The same room, mid-game, sitting on its first open board."""
+    hub, clients, room = match_lobby
+    await clients["p_a"].send("set_options", roundsTotal=5, secondsPerQuestion=30)
+    await clients["p_a"].send("start")
+    assert await wait_for(lambda: room.phase == "question"), "the first board never opened"
+    # The phase flips just *before* the broadcast, so waiting on the room object
+    # alone would race the message into the inboxes. These tests read what the
+    # players actually saw, so wait for the board to land — and don't drain it.
+    assert await wait_for(
+        lambda: all((c.last("room_state") or {}).get("board") for c in clients.values())
+    ), "the open board was never broadcast"
+    return hub, clients, room
+
+
+@pytest.fixture
 def client():
     """Starlette's TestClient over the real ASGI app (REST + WebSocket)."""
     from fastapi.testclient import TestClient
@@ -166,3 +199,23 @@ def correct_choice(question: dict) -> int:
         if content._human_seed_for(dog_index) == question["humanSeed"]:
             return i
     raise AssertionError(f"no correct option among {question['options']}")
+
+
+def correct_dog(board_payload: dict, human_slot: int) -> int:
+    """Which dog slot belongs to a human slot, from the client-safe board payload.
+
+    The same oracle as `correct_choice`, and possible for the same reason: the
+    dummy pairing is salted with SECRET_KEY, so only in-process code can do this.
+    """
+    from app.game import content
+
+    human = board_payload["humans"][human_slot]
+    for dog in board_payload["dogs"]:
+        if content._human_seed_for(dog["dogIndex"]) == human["humanSeed"]:
+            return dog["slot"]
+    raise AssertionError(f"no dog on the board matches human {human_slot}")
+
+
+def perfect_pairs(board_payload: dict) -> dict[int, int]:
+    """The whole answer key for a board, worked out from the payload."""
+    return {h["slot"]: correct_dog(board_payload, h["slot"]) for h in board_payload["humans"]}
