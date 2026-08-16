@@ -1,7 +1,9 @@
-import { useNavigate } from "react-router-dom";
-import { useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
 import { useStore } from "@/lib/store";
+import { forumApi, ForumApiError } from "@/lib/forumApi";
+import { uploadImageUrl, type UploadJob } from "@/lib/uploadApi";
 
 export default NewPost;
 
@@ -16,70 +18,102 @@ function NewPost() {
 }
 
 function Inner() {
-  const { addPost } = useStore();
+  const { state } = useStore();
+  const owner = state.user ?? state.users[0];
   const navigate = useNavigate();
-  const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [media, setMedia] = useState<string | undefined>();
-  const fi = useRef<HTMLInputElement>(null);
+  const [shareable, setShareable] = useState<UploadJob[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    forumApi
+      .shareable(owner.id)
+      .then((rows) => {
+        if (!cancelled) setShareable(rows);
+      })
+      .catch((err) => {
+        if (!cancelled)
+          setLoadError(err instanceof Error ? err.message : "Couldn't load your finished dogs.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [owner.id]);
+
+  async function publish() {
+    if (!body.trim() || submitting) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const post = await forumApi.create(owner.id, owner.username, body.trim(), selected);
+      navigate(`/forum/${post.id}`);
+    } catch (err) {
+      setSubmitError(err instanceof ForumApiError ? err.message : "Couldn't publish that post.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="max-w-2xl mx-auto card-pop p-6">
       <h1 className="font-display text-3xl font-black">New post</h1>
       <div className="mt-4 space-y-3">
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Give it a punchy title"
-          className="w-full rounded-xl border-2 border-[var(--ink)] px-3 py-2 bg-card text-lg font-bold"
-        />
         <textarea
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Say your piece"
+          placeholder="Say your piece — or write a caption for a dog you're sharing"
           rows={6}
           className="w-full rounded-xl border-2 border-[var(--ink)] px-3 py-2 bg-card"
         />
-        {media && (
-          <div className="relative">
-            <img src={media} className="max-h-64 rounded-xl border-2 border-[var(--ink)]" />
-            <button
-              onClick={() => setMedia(undefined)}
-              className="absolute top-2 right-2 btn-pop bg-card px-2 py-1 text-xs"
-            >
-              remove
-            </button>
+
+        <div>
+          <div className="text-sm font-bold text-muted-foreground mb-2">
+            Share one of your finished dogs? (optional)
           </div>
-        )}
-        <div className="flex justify-between gap-2">
+          {loadError && <div className="text-sm text-destructive">{loadError}</div>}
+          {!loadError && shareable.length === 0 && (
+            <div className="text-sm text-muted-foreground">
+              No unshared finished dogs yet — upload some in{" "}
+              <Link to="/upload" className="underline">
+                Match
+              </Link>
+              .
+            </div>
+          )}
+          {shareable.length > 0 && (
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-3">
+              {shareable.map((job) => (
+                <button
+                  key={job.id}
+                  type="button"
+                  onClick={() => setSelected((s) => (s === job.id ? null : job.id))}
+                  className={`card-pop-sm p-2 text-left ${selected === job.id ? "ring-4 ring-[var(--primary)]" : ""}`}
+                >
+                  <img
+                    src={uploadImageUrl(owner.id, job.id)}
+                    className="w-full aspect-square object-cover rounded-lg border-2 border-[var(--ink)]"
+                    alt={job.breedName ?? job.filename}
+                  />
+                  <div className="mt-1 text-xs font-bold truncate">{job.breedName}</div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {submitError && <div className="text-sm text-destructive">{submitError}</div>}
+
+        <div className="flex justify-end gap-2">
           <button
-            type="button"
-            onClick={() => fi.current?.click()}
-            className="btn-pop btn-pop-hover bg-sunshine px-4 py-2"
-          >
-            📎 Attach image/video
-          </button>
-          <input
-            ref={fi}
-            type="file"
-            accept="image/*,video/*"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              const r = new FileReader();
-              r.onload = () => setMedia(r.result as string);
-              r.readAsDataURL(f);
-            }}
-          />
-          <button
-            disabled={!title.trim() || !body.trim()}
-            onClick={() => {
-              const p = addPost(title.trim(), body.trim(), media);
-              navigate(`/forum/${p.id}`);
-            }}
+            disabled={!body.trim() || submitting}
+            onClick={publish}
             className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-5 py-2 disabled:opacity-50"
           >
-            Publish
+            {submitting ? "Publishing…" : "Publish"}
           </button>
         </div>
       </div>
