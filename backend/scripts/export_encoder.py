@@ -151,6 +151,16 @@ def main() -> int:
     assert text_vectors.shape == (attributes.DIM, EMBEDDING_DIM), text_vectors.shape
     np.save(text_path, text_vectors)
 
+    # Held-out wordings, used only by scripts/evaluate_matching.py. Kept raw
+    # (not centred, not ensembled) precisely so they are an outside opinion
+    # rather than a restatement of the vectors above.
+    holdout_path = args.out / f"attribute_holdout_{attributes.ATTRIBUTE_SET}.npy"
+    print(f"embedding {attributes.DIM} held-out probe prompts -> {holdout_path}")
+    probes = [a.holdout for a in attributes.ATTRIBUTES]
+    with torch.no_grad():
+        features = clip.get_text_features(**tokenizer(probes, padding=True, return_tensors="pt"))
+    np.save(holdout_path, l2_normalize(features.cpu().numpy().astype(np.float32)))
+
     if not args.skip_verify:
         drift = verify(onnx_path, clip)
         print(f"onnx vs torch, max abs difference: {drift:.2e}")

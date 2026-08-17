@@ -32,25 +32,31 @@ ATTRIBUTE_SET = "v1"
 class Attribute:
     label: str  # shown to the user as a shared trait
     prompts: tuple[str, ...]  # averaged into one text embedding
+    # A deliberately different wording, held out of the ensemble above and used
+    # only by scripts/evaluate_matching.py. Correlating an attribute axis
+    # against a prompt it was *not* built from is the difference between
+    # testing that the axis measures the trait and testing that a number
+    # equals itself.
+    holdout: str = ""
 
 
 ATTRIBUTES: tuple[Attribute, ...] = (
-    Attribute("fluffy", ("a photo of a very fluffy, furry face", "a close-up of a fluffy hairy face")),
-    Attribute("sleek", ("a photo of a sleek, smooth, short-haired face", "a close-up of a smooth glossy face")),
-    Attribute("shaggy hair", ("a photo of a face with long shaggy messy hair", "a close-up of an unkempt shaggy face")),
-    Attribute("neatly groomed", ("a photo of a neatly groomed, tidy face", "a close-up of a well-groomed face")),
-    Attribute("sleepy eyes", ("a photo of a sleepy face with half-closed eyes", "a close-up of a drowsy tired face")),
-    Attribute("wide eyed", ("a photo of a wide-eyed alert face", "a close-up of a face with big open eyes")),
-    Attribute("long face", ("a photo of a long narrow face", "a close-up of a face with a long snout or long jaw")),
-    Attribute("round face", ("a photo of a round chubby face", "a close-up of a wide flat round face")),
-    Attribute("grumpy", ("a photo of a grumpy frowning face", "a close-up of a disapproving sulky face")),
-    Attribute("goofy grin", ("a photo of a goofy happy grinning face", "a close-up of a silly cheerful face")),
-    Attribute("serious", ("a photo of a serious stern dignified face", "a close-up of a solemn formal face")),
-    Attribute("big ears", ("a photo of a face with big prominent ears", "a close-up of a face with large sticking-out ears")),
-    Attribute("golden colouring", ("a photo of a golden blonde face", "a close-up of a light golden-haired face")),
-    Attribute("dark colouring", ("a photo of a black-haired dark face", "a close-up of a very dark coloured face")),
-    Attribute("ginger colouring", ("a photo of a ginger red-haired face", "a close-up of a reddish auburn face")),
-    Attribute("greying", ("a photo of a grey and white haired older face", "a close-up of a greying elderly face")),
+    Attribute("fluffy", ("a photo of a very fluffy, furry face", "a close-up of a fluffy hairy face"), holdout="an animal or person with a thick fluffy coat of hair"),
+    Attribute("sleek", ("a photo of a sleek, smooth, short-haired face", "a close-up of a smooth glossy face"), holdout="a smooth short-coated glossy appearance"),
+    Attribute("shaggy hair", ("a photo of a face with long shaggy messy hair", "a close-up of an unkempt shaggy face"), holdout="untidy overgrown hair hanging down"),
+    Attribute("neatly groomed", ("a photo of a neatly groomed, tidy face", "a close-up of a well-groomed face"), holdout="a tidy well-kept carefully brushed appearance"),
+    Attribute("sleepy eyes", ("a photo of a sleepy face with half-closed eyes", "a close-up of a drowsy tired face"), holdout="droopy heavy eyelids, looking about to fall asleep"),
+    Attribute("wide eyed", ("a photo of a wide-eyed alert face", "a close-up of a face with big open eyes"), holdout="startled staring eyes opened very wide"),
+    Attribute("long face", ("a photo of a long narrow face", "a close-up of a face with a long snout or long jaw"), holdout="an elongated narrow head shape"),
+    Attribute("round face", ("a photo of a round chubby face", "a close-up of a wide flat round face"), holdout="a broad flat circular head shape"),
+    Attribute("grumpy", ("a photo of a grumpy frowning face", "a close-up of a disapproving sulky face"), holdout="a bad-tempered scowling expression"),
+    Attribute("goofy grin", ("a photo of a goofy happy grinning face", "a close-up of a silly cheerful face"), holdout="a daft delighted open-mouthed smile"),
+    Attribute("serious", ("a photo of a serious stern dignified face", "a close-up of a solemn formal face"), holdout="a formal dignified unsmiling expression"),
+    Attribute("big ears", ("a photo of a face with big prominent ears", "a close-up of a face with large sticking-out ears"), holdout="unusually large ears standing out from the head"),
+    Attribute("golden colouring", ("a photo of a golden blonde face", "a close-up of a light golden-haired face"), holdout="pale yellow blonde fur or hair"),
+    Attribute("dark colouring", ("a photo of a black-haired dark face", "a close-up of a very dark coloured face"), holdout="jet black colouring"),
+    Attribute("ginger colouring", ("a photo of a ginger red-haired face", "a close-up of a reddish auburn face"), holdout="coppery orange-red colouring"),
+    Attribute("greying", ("a photo of a grey and white haired older face", "a close-up of a greying elderly face"), holdout="silver grey hair showing age"),
 )
 
 LABELS: tuple[str, ...] = tuple(a.label for a in ATTRIBUTES)

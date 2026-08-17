@@ -364,21 +364,40 @@ high number means "this dog fits much better than the other 5,238", not "97%
 likely correct". The raw cosine would be useless on its own — after centring it
 lands in a narrow band where 0.19 is a great match.
 
-### 7.6 What has been verified
+### 7.6 What has been measured
 
-- The ONNX export agrees with PyTorch to **2e-6** (checked by the export script
-  itself, which refuses to ship a graph that drifts past 1e-3).
-- The full runtime path — our preprocessing plus the exported graph — correctly
-  zero-shot-captions a real photograph, picking the true caption at +0.300
-  against +0.181/+0.175/+0.126 for distractors. A preprocessing bug would show
-  up here.
-- The attribute vocabulary is near-orthogonal and opposites oppose (above).
+Run on the real corpus (5,239 AFHQ dogs, all embedded) against 300 real faces
+from LFW, via `scripts/evaluate_matching.py`:
 
-**Not yet verified:** end-to-end match *quality* on the real AFHQ corpus with
-real faces, because neither dataset is on the development machine. The
-arithmetic is fully tested against a 6KB stand-in encoder; the judgement of
-whether the dogs actually look like the people needs a human running §7.4 on
-the real data.
+| check | result | why it matters |
+|---|---|---|
+| Distinct dogs | **280 / 300** (diversity 0.93) | The characteristic failure of naive CLIP matching is *collapse* — the species gap dominates and one dog wins for everybody. It isn't happening. |
+| Most common dog | **1.0%** of faces | Collapse would put this near 100%. |
+| Separation | **3.61σ** above the corpus mean | The winner is not a coin flip among 5,239. |
+| Stability | same photo → same dog | A refresh can't contradict the demo. |
+| Attribute grounding | mean **+0.707** rank correlation | Each attribute axis agrees with a *held-out wording* of the same trait, so the traits shown to users mean something. Range +0.44 (round face) to +0.85 (greying). |
+
+Also verified: the ONNX export agrees with PyTorch to **2e-6** (the export script
+refuses to ship past 1e-3), and the full runtime path — our preprocessing plus
+the exported graph — correctly zero-shot-captions a real photograph (+0.300 for
+the true caption against +0.181/+0.175/+0.126), which a preprocessing bug would
+break. Face detection found a face in **1500/1500** LFW images.
+
+> **On the grounding metric.** The held-out probes are mean-centred exactly as
+> the real attribute vectors are. Comparing a centred axis against an uncentred
+> reference understates agreement badly — it reported mean +0.52 and put "sleek"
+> at +0.08, which reads as a broken attribute when it is really a broken
+> yardstick (the same axis scores +0.63 measured correctly). Independence comes
+> from the *wording* being held out, not from the geometry differing. An earlier
+> version of the script compared each axis against its own prompt vector, which
+> is worse still: those are the same quantity up to a per-row scale, so it
+> returned +0.997 for everything and proved only that a number equals itself.
+
+**Still a matter of judgement:** whether the dogs actually *look* like the
+people. Every metric above says the model discriminates, is stable, and its
+attributes track real traits — none of them can say the result is funny or
+flattering, which is what the project is ultimately for. That needs a human
+looking at output.
 
 ## 8. Testing
 
