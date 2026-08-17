@@ -200,7 +200,9 @@ npm run dev
 
 ## Notes / future work
 
-- `backend/app/model.py` is a **placeholder** matcher. Swap `predict_breed`
-  for the real ML model — the API contract in `views.py` won't change.
+- `backend/app/model.py` is a **placeholder** matcher: it picks a real dog out
+  of the corpus by hashing the photo, which is stable and end-to-end correct
+  but is not yet similarity. Swap the one `match_dog()` function for the real
+  model — nothing else changes. See `DATA_STORAGE.md` §7.
 - HTTPS: put a real domain + TLS (e.g. Caddy or nginx + certbot) in front later.
   For now the site is served over plain HTTP on port 80.

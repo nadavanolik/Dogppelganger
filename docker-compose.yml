@@ -61,7 +61,7 @@ services:
 volumes:
   dbdata:
   gamedata:
-  # Seeded once by `docker compose run --rm -v ~/afhq-dog:/seed:ro model \
+  # Seeded once by `docker compose run --rm -v ~/afhq:/seed:ro model \
   #   python scripts/ingest_dogs.py --source /seed`  (DATA_STORAGE.md 5.1).
   # Named, so `docker compose up -d` on every deploy never touches it.
   dogdata:
