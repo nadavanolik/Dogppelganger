@@ -4,7 +4,7 @@ These cover the promises DATA_STORAGE.md makes — that nothing a client sent is
 stored verbatim, that a hostile file fails with a message instead of a
 traceback, and that running the ingest twice is a no-op.
 """
-from io import BytesIO
+import sys
 from pathlib import Path
 
 import pytest
@@ -287,6 +287,94 @@ def test_the_manifest_can_be_regenerated(tmp_path):
 
     assert manifest.read_text().startswith("[")
     ingest_dogs.check_manifest(["a", "b"], manifest, write=False)  # now verifies clean
+
+
+# --------------------------------------------------------------- migration
+
+
+OLD_UPLOAD_JOBS = """
+CREATE TABLE upload_jobs (
+ id INTEGER PRIMARY KEY, owner_id VARCHAR(64) NOT NULL,
+ original_filename VARCHAR(255) NOT NULL, content_type VARCHAR(30) NOT NULL,
+ urgent BOOLEAN, status VARCHAR(20) NOT NULL,
+ breed_name VARCHAR(120), trait VARCHAR(200), confidence FLOAT,
+ error VARCHAR(300), created_at DATETIME, finished_at DATETIME)
+"""
+
+OLD_MATCHES = """
+CREATE TABLE matches (
+ id INTEGER PRIMARY KEY, user_id INTEGER,
+ breed_name VARCHAR(120) NOT NULL, trait VARCHAR(200), confidence FLOAT,
+ created_at DATETIME)
+"""
+
+
+def test_migrating_an_old_database_adds_and_drops_the_right_columns(tmp_path):
+    """The deploy case: `dbdata` is a named volume, so the VM keeps the old
+    tables. create_all() adds tables but never columns, so without a migration
+    every upload/forum/match query dies on a missing column at once.
+
+    Driven through `plan()` against a throwaway engine rather than `migrate()`:
+    migrate() binds to the process-wide engine, and rebinding that mid-suite
+    would leave every later test talking to the wrong database.
+    """
+    import sqlalchemy
+    from sqlalchemy import inspect, text
+
+    import migrate_schema
+
+    db_file = tmp_path / "old.db"
+    old_engine = sqlalchemy.create_engine(f"sqlite:///{db_file}")
+    with old_engine.begin() as conn:
+        # The pre-change shape of the two tables that changed.
+        conn.execute(text(OLD_UPLOAD_JOBS))
+        conn.execute(text(OLD_MATCHES))
+        conn.execute(
+            text(
+                "INSERT INTO upload_jobs (owner_id, original_filename, content_type,"
+                " status, breed_name) VALUES ('o', 'me.jpg', 'image/jpeg', 'done', 'Pug')"
+            )
+        )
+
+    with old_engine.begin() as conn:
+        statements = migrate_schema.plan(conn)
+        assert any("ADD COLUMN dog_asset_id" in s for s in statements)
+        assert any("upload_jobs ADD COLUMN checksum" in s for s in statements)
+        assert any("DROP COLUMN breed_name" in s for s in statements)
+        for statement in statements:
+            conn.execute(text(statement))
+
+    with old_engine.begin() as conn:
+        columns = {c["name"] for c in inspect(conn).get_columns("upload_jobs")}
+        assert {"checksum", "byte_size", "width", "height", "dog_asset_id", "score"} <= columns
+        assert not {"breed_name", "trait", "confidence"} & columns
+        assert (
+            conn.execute(text("SELECT original_filename FROM upload_jobs")).scalar() == "me.jpg"
+        ), "existing rows survive the migration"
+
+        # matches.breed_name was NOT NULL, so if the drop hadn't happened this
+        # INSERT would fail — the new code never supplies a breed.
+        conn.execute(
+            text("INSERT INTO matches (user_id, dog_asset_id, score) VALUES (NULL, NULL, 0.5)")
+        )
+
+        assert migrate_schema.plan(conn) == [], "a second run must be a no-op"
+
+    old_engine.dispose()
+
+
+def test_migrating_a_fresh_database_is_a_no_op(tmp_path):
+    """Running it on a VM that has never seen the old schema must do nothing."""
+    import sqlalchemy
+
+    import migrate_schema
+
+    engine = sqlalchemy.create_engine(f"sqlite:///{tmp_path / 'fresh.db'}")
+    try:
+        with engine.begin() as conn:
+            assert migrate_schema.plan(conn) == []
+    finally:
+        engine.dispose()
 
 
 def test_the_committed_manifest_is_a_list_of_slugs():

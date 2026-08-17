@@ -16,6 +16,8 @@ import pytest
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
+# The one-off scripts aren't a package; tests import them by name.
+sys.path.insert(0, str(BACKEND_DIR / "scripts"))
 
 # Isolate every run: real leaderboards and databases are never touched.
 _TMP = tempfile.mkdtemp(prefix="dogppelganger-test-")
@@ -239,7 +241,6 @@ def dog_corpus():
     from app.database import Base, SessionLocal, engine
     from app.models import DogAsset
 
-    sys.path.insert(0, str(BACKEND_DIR / "scripts"))
     import ingest_dogs
 
     Base.metadata.create_all(bind=engine)

@@ -80,9 +80,25 @@ class DogMatchResult:
     shared_traits: list[str] = field(default_factory=list)
 
 
+class SourceImageMissing(RuntimeError):
+    """We were asked to match a stored photo that isn't on disk.
+
+    Raised rather than quietly falling back to a constant seed. A job whose
+    derivatives were never written — the process died between committing the
+    row and writing the files — would otherwise be marked ``done`` with a real
+    dog, a real score and real traits, and *every* job in that state would get
+    the same dog. A failed match must look like a failure.
+    """
+
+    def __init__(self, image_path: Path) -> None:
+        super().__init__(f"the stored photo is missing at {image_path}")
+
+
 def _digest(image_path: Path | None, fallback: str | None) -> str:
     """A stable hex digest for whatever we were given to match on."""
-    if image_path is not None and image_path.exists():
+    if image_path is not None:
+        if not image_path.exists():
+            raise SourceImageMissing(image_path)
         return checksum_of(image_path.read_bytes())
     return hashlib.sha256((fallback or "anonymous").encode("utf-8")).hexdigest()
 
@@ -100,7 +116,8 @@ def match_dog(
     `fallback_seed` covers the legacy ``POST /api/match`` path, which passes a
     string rather than a file.
 
-    Raises `CorpusEmpty` if no dogs have been ingested.
+    Raises `CorpusEmpty` if no dogs have been ingested, or
+    `SourceImageMissing` if `image_path` was given but isn't on disk.
     """
     total = db.query(func.count(DogAsset.id)).scalar() or 0
     if total == 0:

@@ -159,6 +159,27 @@ header's claim.
 > is a follow-up, not part of this change — `/api/match` is a live endpoint and
 > collapsing the two tables is a call for the whole team, not for me alone.
 
+### 4.4 Migrating an existing database
+
+`main.py` calls `Base.metadata.create_all()`, which creates **missing tables and
+nothing else** — it will not add a column to a table that already exists. The
+Postgres data directory is the named volume `dbdata`, which survives every
+deploy. So a VM that has already run the old code keeps an `upload_jobs` table
+with `breed_name`/`trait`/`confidence` and none of the new columns, and every
+query the new mapping emits fails at once: uploads, the forum feed and the match
+endpoints all 500 together. `matches.breed_name` was `NOT NULL`, so inserts fail
+too, not just reads.
+
+`backend/scripts/migrate_schema.py` fixes that. It inspects the live schema and
+issues only the changes actually missing, so it is safe to run repeatedly and is
+a no-op on a fresh database. The deploy workflow runs it on every deploy, before
+`docker compose up -d`; run it by hand with `--dry-run` first if you want to see
+the plan.
+
+It is deliberately not Alembic — one schema change across two tables does not
+justify a migration framework with a version history. If the schema starts
+moving regularly, switch to Alembic rather than growing that script.
+
 ---
 
 ## 5. Ingest

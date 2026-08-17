@@ -182,6 +182,25 @@ def test_a_queued_upload_ends_up_matched_to_a_dog(client, dog_corpus):
     assert finished["dog"]["imageUrl"].startswith("/dogs/256/")
 
 
+def test_a_job_whose_photo_vanished_errors_instead_of_inventing_a_match(dog_corpus, tmp_path):
+    """The crash-between-commit-and-write case.
+
+    A job row is committed before its derivatives are written, so a process
+    killed in that window leaves a queued job with no files. Falling back to a
+    constant seed would mark it `done` with a real dog — and give every job in
+    that state the *same* dog.
+    """
+    from app.database import SessionLocal
+    from app.model import SourceImageMissing, match_dog
+
+    db = SessionLocal()
+    try:
+        with pytest.raises(SourceImageMissing):
+            match_dog(db, tmp_path / "never-written.jpg")
+    finally:
+        db.close()
+
+
 @pytest.mark.parametrize("with_dog", [True, False], ids=["matched", "still processing"])
 def test_a_job_can_still_be_rendered_after_it_leaves_its_session(dog_corpus, with_dog):
     """What the worker sends over the WebSocket, tested where it can't hang.

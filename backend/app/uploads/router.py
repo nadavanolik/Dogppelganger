@@ -11,6 +11,7 @@ metadata segment. See DATA_STORAGE.md §6.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -105,8 +106,13 @@ async def upload_images(
 
         # Decode before creating the row, so a bomb or a corrupt file leaves no
         # orphan job behind. `ImageRejected` carries a user-safe message.
+        #
+        # Off the event loop: Pillow is synchronous CPU work, and this handler
+        # is async. A 20-file batch would otherwise block the loop for seconds
+        # — no WebSocket frames delivered, no progress from the queue workers,
+        # every other request stalled behind it.
         try:
-            image = decode(data)
+            image = await asyncio.to_thread(decode, data)
         except ImageRejected as exc:
             rejected.append({"filename": display_name, "reason": str(exc)})
             continue
@@ -132,7 +138,7 @@ async def upload_images(
                 layout.upload_path(job.id, size): spec
                 for size, spec in layout.UPLOAD_SIZES.items()
             }
-            stored = write_derivatives(data, targets, image=image)
+            stored = await asyncio.to_thread(write_derivatives, data, targets, image)
         except (ImageRejected, OSError) as exc:
             layout.delete_upload_files(job.id)
             db.delete(job)

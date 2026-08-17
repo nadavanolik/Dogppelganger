@@ -142,7 +142,20 @@ async def _notify(notify: Notify, job: UploadJob) -> None:
 
 async def _worker(notify: Notify) -> None:
     while True:
-        job = await _claim_next()
+        # The claim needs its own guard: it is outside the try below, so a
+        # database blip (Postgres restart, a lock, a schema that hasn't been
+        # migrated) used to propagate out of the worker and end the task. All
+        # three workers hit it within one poll cycle, and because `_tasks`
+        # keeps a strong reference forever, asyncio never reports the dead
+        # task — the queue just silently stopped, /api/health stayed green,
+        # and every upload sat at "queued" for good.
+        try:
+            job = await _claim_next()
+        except Exception:
+            log.exception("could not claim the next upload job; retrying")
+            await asyncio.sleep(IDLE_POLL_SECONDS)
+            continue
+
         if job is None:
             await asyncio.sleep(IDLE_POLL_SECONDS)
             continue

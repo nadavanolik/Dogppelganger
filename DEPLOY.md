@@ -120,6 +120,21 @@ Quick checks:
 curl http://<SSH_HOST>/api/health      # -> {"status":"ok"}
 ```
 
+### Database schema
+
+The deploy workflow now runs `scripts/migrate_schema.py` on the VM before
+starting the new containers. You don't need to do anything — it's idempotent
+and prints `nothing to do` once applied.
+
+It's there because `create_all()` only ever creates *missing tables*: it never
+adds a column to a table that already exists, and `dbdata` is a named volume
+that survives every deploy. Without it, a VM running the old schema would 500
+on every upload, forum and match request at once. To inspect the plan by hand:
+
+```bash
+cd ~/dogppelganger && docker compose run --rm model python scripts/migrate_schema.py --dry-run
+```
+
 ### Seed the dog corpus (once, after the first deploy)
 
 Matching has nothing to match against until the AFHQ dog photos are on the

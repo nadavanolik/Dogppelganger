@@ -60,5 +60,12 @@ jobs:
             cd ~/dogppelganger
             git pull --ff-only
             docker compose pull
+            # Schema before code. main.py's create_all() builds missing tables
+            # but never adds a column to one that already exists, and the
+            # Postgres data directory is a named volume that survives every
+            # deploy — so without this the new image queries columns the live
+            # database hasn't got. The script is idempotent: once applied it
+            # prints "nothing to do" and exits 0.
+            docker compose run --rm model python scripts/migrate_schema.py
             docker compose up -d
             docker image prune -f
