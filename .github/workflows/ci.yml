@@ -38,7 +38,7 @@ jobs:
       # not installed into the image — see backend/Dockerfile.
       - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
       - name: Byte-compile (syntax check)
-        run: python -m compileall backend/main.py backend/app backend/tests
+        run: python -m compileall backend/main.py backend/app backend/tests backend/scripts
       - name: Game tests (engine + API + WebSocket)
         run: pytest
         working-directory: backend

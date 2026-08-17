@@ -2,7 +2,7 @@
 
 Jobs are rows in ``upload_jobs`` (queued -> processing -> done | error). A
 small pool of async workers repeatedly claims the highest-priority queued job
-and turns it into a breed match via ``predict_breed``.
+and matches its stored photo against the dog corpus via ``model.match_dog``.
 
 ``priority_key`` is the only thing that decides processing order, and today
 it's a placeholder: pure arrival order (lower id = uploaded earlier = goes
@@ -20,8 +20,9 @@ from datetime import datetime
 from typing import Awaitable, Callable
 
 from ..database import SessionLocal
-from ..model import predict_breed
+from ..model import DogMatchResult, match_dog
 from ..models import UploadJob
+from ..storage import layout
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +53,25 @@ def _event(job: UploadJob) -> dict:
     return {"type": "upload_update", "payload": job.as_dict()}
 
 
+def _detach(db, job: UploadJob) -> UploadJob:
+    """Take a job out of its session with everything ``as_dict()`` needs loaded.
+
+    Workers report jobs over the WebSocket *after* the session that produced
+    them is closed, so the ``dog`` relationship has to be resolved while it can
+    still be queried. Touching it here forces the lazy load; skip that and
+    ``as_dict()`` raises DetachedInstanceError — which ``_notify`` swallows, so
+    the client silently never hears that its match is ready.
+
+    This bites even when there is no dog yet: a detached instance refuses the
+    lazy load rather than short-circuiting on the NULL foreign key.
+    """
+    dog = job.dog
+    db.expunge(job)
+    if dog is not None:
+        db.expunge(dog)
+    return job
+
+
 async def _claim_next() -> UploadJob | None:
     """Atomically move the next queued job to 'processing' and hand it back."""
 
@@ -65,8 +85,7 @@ async def _claim_next() -> UploadJob | None:
             job.status = "processing"
             db.commit()
             db.refresh(job)
-            db.expunge(job)
-            return job
+            return _detach(db, job)
         finally:
             db.close()
 
@@ -75,7 +94,20 @@ async def _claim_next() -> UploadJob | None:
         return await asyncio.to_thread(_do)
 
 
-async def _finish(job_id: int, result: dict | None, error: str | None) -> UploadJob | None:
+def _run_model(job_id: int) -> DogMatchResult:
+    """Match one job's photo against the corpus. Blocking — call in a thread.
+
+    Reads the stored, already-normalised original (never the client's bytes),
+    so the model sees the same RGB JPEG whatever the browser sent.
+    """
+    db = SessionLocal()
+    try:
+        return match_dog(db, layout.upload_path(job_id, "orig"))
+    finally:
+        db.close()
+
+
+async def _finish(job_id: int, result: DogMatchResult | None, error: str | None) -> UploadJob | None:
     def _do() -> UploadJob | None:
         db = SessionLocal()
         try:
@@ -87,14 +119,13 @@ async def _finish(job_id: int, result: dict | None, error: str | None) -> Upload
                 job.error = error[:300]
             else:
                 job.status = "done"
-                job.breed_name = result["breedName"]
-                job.trait = result["trait"]
-                job.confidence = result["confidence"]
+                job.dog_asset_id = result.dog_asset_id
+                job.score = result.score
+                job.shared_traits = result.shared_traits
             job.finished_at = datetime.utcnow()
             db.commit()
             db.refresh(job)
-            db.expunge(job)
-            return job
+            return _detach(db, job)
         finally:
             db.close()
 
@@ -119,7 +150,9 @@ async def _worker(notify: Notify) -> None:
         await _notify(notify, job)
         try:
             await asyncio.sleep(random.uniform(MIN_PROCESS_SECONDS, MAX_PROCESS_SECONDS))
-            result = predict_breed(f"{job.id}:{job.original_filename}")
+            # Off the event loop: matching is synchronous DB + file work, and
+            # the real model will be CPU-heavy on top of that.
+            result = await asyncio.to_thread(_run_model, job.id)
             done = await _finish(job.id, result, None)
         except Exception as exc:  # a broken job shouldn't take the worker down
             log.exception("upload job %s failed", job.id)

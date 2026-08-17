@@ -18,6 +18,13 @@ export default defineConfig({
         // forward the WebSocket upgrade too (nginx already does in production).
         ws: true,
       },
+      // Dog photos. In production nginx serves these off the `dogdata` volume;
+      // in dev the backend static-mounts the same directory, so ingesting once
+      // locally is enough to see real dogs at `npm run dev`.
+      "/dogs": {
+        target: "http://localhost:5000",
+        changeOrigin: true,
+      },
     },
   },
   build: {

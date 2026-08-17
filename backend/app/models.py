@@ -2,18 +2,21 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
     Float,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
 from .database import Base
+from .storage import layout
 
 
 class User(Base):
@@ -28,25 +31,105 @@ class User(Base):
     matches = relationship("Match", back_populates="user")
 
 
+class DogAsset(Base):
+    """One dog photo in the retrieval corpus (AFHQ) — see DATA_STORAGE.md §4.1.
+
+    The row holds *metadata and vectors only*; the pixels live on the `dogdata`
+    volume under ``layout.dog_path(slug, size)`` and are served straight off
+    disk by nginx. That split is the whole point: 226MB of immutable public
+    JPEGs have no business in ``bytea``, where they would bloat every backup
+    and every shared-buffer read to replace a job the page cache does better.
+
+    ``slug`` is the identity — it is the filename nginx serves and the key the
+    ingest script skips on, so re-running the ingest over the same dataset is a
+    no-op. ``checksum`` is the SHA-256 of the source file, deliberately *not*
+    unique: AFHQ contains byte-identical photos under different filenames, and
+    one duplicate must not abort a 5,239-image run. It is indexed so the ingest
+    can report those duplicates, which matter for retrieval — a dog present
+    twice is twice as likely to be matched.
+    """
+
+    __tablename__ = "dog_assets"
+
+    id = Column(Integer, primary_key=True)
+    # Stable public name with no extension, e.g. "flickr_dog_000002".
+    slug = Column(String(64), unique=True, nullable=False, index=True)
+    checksum = Column(String(64), nullable=False, index=True)
+    source_split = Column(String(10))  # "train" | "val" — AFHQ provenance
+    width = Column(Integer, nullable=False)
+    height = Column(Integer, nullable=False)
+    byte_size = Column(Integer, nullable=False)
+
+    # Position in src/lib/dogImages.json. The backend names a dog to the
+    # frontend by this integer (see app/game/content.py and src/lib/dogSrc.ts),
+    # so it has to stay in lockstep with that file — the ingest script verifies
+    # it. Nullable only for the window inside ingest before indices are dealt.
+    manifest_index = Column(Integer, unique=True, index=True)
+
+    # float32 vectors as raw bytes (np.ndarray.tobytes()). Portable across
+    # SQLite and Postgres, and 10.7MB for the whole corpus at 512 dims, which
+    # is small enough to hold in RAM and scan linearly — no index needed.
+    # NULL until the embedding pass runs; see DATA_STORAGE.md §4.2.
+    embedding = Column(LargeBinary)
+    embedding_dim = Column(Integer)
+    embedding_model = Column(String(64), index=True)
+    # The interpretable side: how strongly this dog reads as each attribute in
+    # the vocabulary named by `attribute_set`. Backs `shared_traits` on a match.
+    attributes = Column(LargeBinary)
+    attribute_set = Column(String(64))
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def image_url(self, size: str = "256") -> str:
+        """The public URL nginx serves this dog from."""
+        return f"/dogs/{size}/{layout.dog_filename(self.slug, size)}"
+
+    def as_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "slug": self.slug,
+            "index": self.manifest_index,
+            "width": self.width,
+            "height": self.height,
+            "thumbUrl": self.image_url("128"),
+            "imageUrl": self.image_url("256"),
+            "fullUrl": self.image_url("512"),
+        }
+
+
 class Match(Base):
+    """A completed human -> dog match.
+
+    NOTE: this overlaps heavily with ``UploadJob`` now that both carry a dog
+    reference. Collapsing the two is a follow-up for the whole team, not a
+    unilateral call — ``/api/match`` is a live endpoint (see routers/views.py).
+    """
+
     __tablename__ = "matches"
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    breed_name = Column(String(120), nullable=False)
-    trait = Column(String(200))
-    confidence = Column(Float)
+    # Which dog was retrieved. Nullable because a match can exist before the
+    # corpus has been ingested (fresh dev database, empty volume).
+    dog_asset_id = Column(Integer, ForeignKey("dog_assets.id"), nullable=True)
+    # Similarity, 0..1. Named `score` and not `confidence` deliberately: this is
+    # retrieval distance, not a classifier's probability of being right.
+    score = Column(Float)
+    # Why this dog — the attributes the person and the dog scored alike on.
+    shared_traits = Column(JSON)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", back_populates="matches")
+    dog = relationship("DogAsset")
 
     def as_dict(self) -> dict:
         return {
             "id": self.id,
             "userId": self.user_id,
-            "breedName": self.breed_name,
-            "trait": self.trait,
-            "confidence": self.confidence,
+            "dog": self.dog.as_dict() if self.dog else None,
+            "dogIndex": self.dog.manifest_index if self.dog else None,
+            "score": self.score,
+            "sharedTraits": self.shared_traits or [],
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -70,12 +153,25 @@ class UploadJob(Base):
     urgent = Column(Boolean, default=False, nullable=False)
     # queued -> processing -> done | error
     status = Column(String(20), default="queued", nullable=False)
-    breed_name = Column(String(120))
-    trait = Column(String(200))
-    confidence = Column(Float)
+
+    # What we actually stored, measured after re-encoding rather than taken
+    # from the multipart headers. `byte_size` is the queue's shortest-job-first
+    # proxy (see uploads/queue.py), so a client-supplied number won't do.
+    checksum = Column(String(64), index=True)
+    byte_size = Column(Integer)
+    width = Column(Integer)
+    height = Column(Integer)
+
+    # The result: which dog, how close, and why.
+    dog_asset_id = Column(Integer, ForeignKey("dog_assets.id"), nullable=True)
+    score = Column(Float)
+    shared_traits = Column(JSON)
+
     error = Column(String(300))
     created_at = Column(DateTime, default=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
+
+    dog = relationship("DogAsset")
 
     def as_dict(self) -> dict:
         return {
@@ -83,9 +179,13 @@ class UploadJob(Base):
             "filename": self.original_filename,
             "urgent": self.urgent,
             "status": self.status,
-            "breedName": self.breed_name,
-            "trait": self.trait,
-            "confidence": self.confidence,
+            "byteSize": self.byte_size,
+            "width": self.width,
+            "height": self.height,
+            "dog": self.dog.as_dict() if self.dog else None,
+            "dogIndex": self.dog.manifest_index if self.dog else None,
+            "score": self.score,
+            "sharedTraits": self.shared_traits or [],
             "error": self.error,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "finishedAt": self.finished_at.isoformat() if self.finished_at else None,

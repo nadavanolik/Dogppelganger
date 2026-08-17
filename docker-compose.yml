@@ -29,10 +29,17 @@ services:
     environment:
       SECRET_KEY: ${SECRET_KEY:-change-me}
       DATABASE_URL: postgresql://${POSTGRES_USER:-dogapp}:${POSTGRES_PASSWORD:-dogapp}@db:5432/${POSTGRES_DB:-dogppelganger}
+      # Where the storage layer puts image bytes — see DATA_STORAGE.md 3.
+      DOG_DATA_DIR: /data/dogs
+      UPLOAD_DATA_DIR: /app/data/uploads
     volumes:
-      # Game leaderboards snapshot here (app/game/store.py). A named volume so
-      # they survive `up --build` and CD deploys without needing the database.
+      # Game leaderboards snapshot here (app/game/store.py), and user uploads
+      # live under uploads/. A named volume so they survive `up --build` and CD
+      # deploys without needing the database.
       - gamedata:/app/data
+      # The ingested dog corpus. Writable here because scripts/ingest_dogs.py
+      # runs in this container; the site mounts the same volume read-only.
+      - dogdata:/data/dogs
     depends_on:
       db:
         condition: service_healthy
@@ -43,9 +50,18 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    volumes:
+      # nginx serves the 5,239 dog photos straight off this mount (see
+      # nginx.conf). Read-only: the web tier has no business writing to the
+      # corpus, and the corpus is seeded once by the ingest script.
+      - dogdata:/usr/share/nginx/html/dogs:ro
     depends_on:
       - model
 
 volumes:
   dbdata:
   gamedata:
+  # Seeded once by `docker compose run --rm -v ~/afhq-dog:/seed:ro model \
+  #   python scripts/ingest_dogs.py --source /seed`  (DATA_STORAGE.md 5.1).
+  # Named, so `docker compose up -d` on every deploy never touches it.
+  dogdata:

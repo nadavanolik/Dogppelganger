@@ -364,9 +364,23 @@ function UploadQueue({
                 {STATUS_LABEL[job.status]}
               </span>
             </div>
-            {job.status === "done" && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {job.breedName} — {job.trait}
+            {job.status === "done" && job.dog && (
+              <div className="mt-2 flex items-center gap-2">
+                <img
+                  src={job.dog.thumbUrl}
+                  alt="the matched dog"
+                  className="h-10 w-10 object-cover rounded-lg border-2 border-[var(--ink)] shrink-0"
+                />
+                <div className="min-w-0 text-xs text-muted-foreground">
+                  {job.score != null && (
+                    <div className="font-bold text-foreground">
+                      {Math.round(job.score * 100)}% match
+                    </div>
+                  )}
+                  {job.sharedTraits.length > 0 && (
+                    <div className="truncate italic">{job.sharedTraits.join(" · ")}</div>
+                  )}
+                </div>
               </div>
             )}
             {job.status === "error" && job.error && (

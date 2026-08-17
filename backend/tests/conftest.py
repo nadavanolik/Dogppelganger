@@ -22,6 +22,11 @@ _TMP = tempfile.mkdtemp(prefix="dogppelganger-test-")
 atexit.register(lambda: shutil.rmtree(_TMP, ignore_errors=True))
 os.environ["GAME_DATA_DIR"] = str(Path(_TMP) / "gamedata")
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(_TMP).as_posix()}/test.db")
+# Image storage lands in the same throwaway tree — no volume, no real corpus.
+# Set before app.storage.layout is imported anywhere, for the same reason as
+# GAME_DATA_DIR above.
+os.environ["DOG_DATA_DIR"] = str(Path(_TMP) / "dogs")
+os.environ["UPLOAD_DATA_DIR"] = str(Path(_TMP) / "uploads")
 
 from app.game import rooms, solo, solo_match, store  # noqa: E402  (must follow the env setup)
 from app.game.hub import Hub, Player  # noqa: E402
@@ -185,6 +190,84 @@ def client():
 
     with TestClient(app) as test_client:
         yield test_client
+
+
+# ------------------------------------------------------------------ images
+#
+# The dog corpus is ~226MB and deliberately not in git (DATA_STORAGE.md §5.1),
+# so the storage tests build their own images instead. Synthetic ones are
+# strictly better here: no binaries in the repo, no download in CI, and a
+# gradient of a known size is easier to assert on than a photo of a dog.
+
+
+def make_image(
+    width: int = 600,
+    height: int = 400,
+    fmt: str = "JPEG",
+    *,
+    colour: tuple[int, int, int] = (200, 120, 60),
+    mode: str = "RGB",
+    exif: bool = False,
+) -> bytes:
+    """Encoded image bytes, deterministic for a given set of arguments."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    image = Image.new(mode, (width, height), colour if mode != "RGBA" else (*colour, 128))
+    buffer = BytesIO()
+    if exif:
+        # Orientation=6 means "rotate 90° CW to display", the tag phones set
+        # when you shoot in portrait. decode() must apply it and then drop it.
+        tags = Image.Exif()
+        tags[0x0112] = 6
+        image.save(buffer, fmt, exif=tags)
+    else:
+        image.save(buffer, fmt)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def dog_corpus():
+    """Ingest a handful of synthetic 'dogs' and return their slugs.
+
+    Uses the real ingest path rather than inserting rows directly, so the
+    tests that depend on a populated corpus also keep the script honest.
+    """
+    import shutil
+
+    from app.database import Base, SessionLocal, engine
+    from app.models import DogAsset
+
+    sys.path.insert(0, str(BACKEND_DIR / "scripts"))
+    import ingest_dogs
+
+    Base.metadata.create_all(bind=engine)
+    source = Path(tempfile.mkdtemp(prefix="dogsrc-", dir=_TMP))
+    for i in range(5):
+        (source / f"flickr_dog_{i:06d}.jpg").write_bytes(
+            make_image(320, 320, colour=(40 * i + 10, 90, 140))
+        )
+
+    # Single worker: a process pool inside pytest costs more in spawn time than
+    # five 320px images cost to resize.
+    ingest_dogs.ingest(source, limit=None, workers=1)
+    db = SessionLocal()
+    try:
+        slugs = ingest_dogs.assign_manifest_indices(db)
+    finally:
+        db.close()
+
+    yield slugs
+
+    db = SessionLocal()
+    try:
+        db.query(DogAsset).delete()
+        db.commit()
+    finally:
+        db.close()
+    shutil.rmtree(source, ignore_errors=True)
+    shutil.rmtree(Path(os.environ["DOG_DATA_DIR"]), ignore_errors=True)
 
 
 def correct_choice(question: dict) -> int:

@@ -1,4 +1,5 @@
 import dogImages from "./dogImages.json";
+import { dogSrc } from "./dogSrc";
 
 export const BREEDS = [
   {
@@ -50,7 +51,9 @@ export function randomBreed(seed?: string): Breed {
     h = Math.floor(Math.random() * 1000000);
   }
   const base = BREEDS[h % BREEDS.length];
-  const image = dogImages.length > 0 ? `/dogs/${dogImages[h % dogImages.length]}` : undefined;
+  // dogImages.json holds slugs, not filenames — dogSrc turns one into a URL
+  // for the right derivative. See src/lib/dogSrc.ts.
+  const image = dogImages.length > 0 ? dogSrc(h) : undefined;
   return { ...base, image };
 }
 

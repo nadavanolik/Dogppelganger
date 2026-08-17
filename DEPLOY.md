@@ -120,6 +120,33 @@ Quick checks:
 curl http://<SSH_HOST>/api/health      # -> {"status":"ok"}
 ```
 
+### Seed the dog corpus (once, after the first deploy)
+
+Matching has nothing to match against until the AFHQ dog photos are on the
+`dogdata` volume, and every dog image on the site 404s. This is a **one-time**
+step — the volume is named, so deploys never touch it.
+
+Copy the extracted dog folder up, then run the ingest inside the backend
+container:
+
+```bash
+scp -r ~/afhq/dog <SSH_USER>@<SSH_HOST>:~/afhq-dog
+```
+
+```bash
+cd ~/dogppelganger && docker compose run --rm -v ~/afhq-dog:/seed:ro model python scripts/ingest_dogs.py --source /seed
+```
+
+It takes a few minutes for 5,239 images and is safe to interrupt and re-run.
+Confirm it worked:
+
+```bash
+curl http://<SSH_HOST>/api/dogs/stats     # -> {"total":5239,...}
+```
+
+`total: 0` means the corpus is still empty. See `DATA_STORAGE.md` §5 for the
+full ingest contract.
+
 On the VM you can inspect things with:
 
 ```bash

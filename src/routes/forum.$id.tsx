@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { useStore } from "@/lib/store";
 import { forumApi, type ForumComment, type PostWithComments } from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
+import { MatchPair } from "@/components/MatchPair";
 
 export default PostDetail;
 
@@ -104,16 +105,14 @@ function PostDetail() {
           </div>
           <p className="mt-3 whitespace-pre-wrap">{post.body}</p>
           {post.image && (
-            <div className="mt-4 flex items-center gap-4">
-              <img
-                src={uploadImageUrl(post.authorId, post.image.jobId)}
-                className="h-40 w-40 object-cover rounded-xl border-2 border-[var(--ink)]"
-                alt={post.image.breedName ?? ""}
+            <div className="mt-4">
+              <MatchPair
+                humanSrc={uploadImageUrl(post.authorId, post.image.jobId)}
+                dog={post.image.dog}
+                score={post.image.score}
+                sharedTraits={post.image.sharedTraits}
+                size="lg"
               />
-              <div>
-                <div className="font-display text-2xl font-bold">{post.image.breedName}</div>
-                <div className="text-muted-foreground italic">{post.image.trait}</div>
-              </div>
             </div>
           )}
           <div className="mt-4 flex items-center gap-2">

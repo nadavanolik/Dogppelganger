@@ -7,3 +7,8 @@ PyJWT==2.10.1
 bcrypt==4.2.1
 python-dotenv==1.0.1
 python-multipart==0.0.20
+# Image decode/resize for the storage layer (app/storage/imaging.py).
+Pillow==11.1.0
+# Embedding vectors are stored as raw float32 bytes and scanned as one matrix
+# at match time — see DATA_STORAGE.md 4.2.
+numpy==2.2.1

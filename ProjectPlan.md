@@ -11,10 +11,10 @@ These are assumed throughout the spec so each page can be described consistently
 
 - **Frontend:** React SPA (client-side routing).
 - **Backend:** FastAPI (REST + WebSocket).
-- **Database:** PostgreSQL.
-- **Object storage:** MinIO locally / Azure Blob in prod (all user images, dog matches, attachments).
-- **Queue:** Redis + Celery workers for image "dogify" processing.
-- **ML service:** CLIP embedding + FAISS nearest-neighbor over the AFHQ dog-face corpus.
+- **Database:** PostgreSQL — one database for everything: users, matches, forum, and the dog-corpus metadata and vectors.
+- **Image storage:** Docker named volumes, not an object store. The dog corpus is public and immutable so nginx serves it straight off a read-only mount; user photos go through an ownership-checked API endpoint. MinIO was dropped — it is a whole extra service to secure and back up for 330 MB of static files. See `DATA_STORAGE.md`.
+- **Queue:** an in-process pool of asyncio workers (`backend/app/uploads/queue.py`). Redis + Celery was dropped: the app already runs a single backend process to keep the WebSocket registry in memory, so a broker would add a moving part without adding parallelism.
+- **ML service:** CLIP embeddings over the AFHQ dog-face corpus, compared by a linear scan. No FAISS — 5,239 × 512 float32 is 10.7 MB, which fits in RAM and scans faster than an index lookup at this size.
 - **Real-time:** a single authenticated WebSocket connection per logged-in client, opened once after login and reused everywhere (notifications, DMs, multiplayer, queue updates). Messages are typed events: `{ "type": "...", "payload": {...} }`.
 
 **Auth model:** JWT issued at login, sent as `Authorization: Bearer <token>` on REST calls and as a query/first-frame token on the WebSocket. Protected routes require a valid token; the frontend guards them and the backend re-checks on every call.
@@ -389,7 +389,7 @@ Solid arrows are explicit user clicks; dotted arrows are deep-links fired by liv
 These aren't pages but are relied on by several of the specs above, collected here so each page section stays focused:
 
 - **Priority queue** — powers the Upload batch flow and the Dashboard queue panel. Orders jobs by urgent-first, then shortest-job-first (image byte size as the duration proxy), with per-client fairness so one user's large batch can't starve another's single image. Emits `queue_update` / `match_ready` over the WebSocket.
-- **ML matching service** — the CLIP→FAISS retrieval over AFHQ dog faces that each `POST /api/match` job ultimately calls. Human uploads are face-cropped before embedding to mirror the dog-face corpus.
+- **ML matching service** — the retrieval over AFHQ dog faces that each match job ultimately calls, behind the single `match_dog()` seam in `backend/app/model.py`. Because there are no human↔dog training pairs, matching is CLIP embeddings with species-mean centring plus a shared text-attribute space, rather than anything supervised; the attribute scores are also what the result page shows as the reason for a match. Note that the API no longer reports a breed name: AFHQ carries no breed labels, so what comes back is the retrieved photo, a similarity score, and the shared traits. See `DATA_STORAGE.md` §7.
 - **WebSocket backbone** — one connection per client, opened at login, multiplexing queue updates, notifications, DMs, and multiplayer game events by `type`.
 - **Security** — every upload endpoint (match images, forum media, DM media) enforces type + size limits and safe decoding; write endpoints are rate-limited to resist spam/flooding.
 - **Cold seeding** — the DB ships with fake users, forum posts/comments, and shared gallery matches so the Feed, Gallery, and Game are populated on first run.

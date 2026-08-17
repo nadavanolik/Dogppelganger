@@ -59,9 +59,10 @@ def _image_dict(job: UploadJob | None) -> dict | None:
         return None
     return {
         "jobId": job.id,
-        "breedName": job.breed_name,
-        "trait": job.trait,
-        "confidence": job.confidence,
+        "dog": job.dog.as_dict() if job.dog else None,
+        "dogIndex": job.dog.manifest_index if job.dog else None,
+        "score": job.score,
+        "sharedTraits": job.shared_traits or [],
     }
 
 

@@ -5,7 +5,7 @@
  * Identity here is the same seam as gameApi/uploadApi: an id/name pair from
  * the local-only mock auth, not a real login token.
  */
-import type { UploadJob } from "./uploadApi";
+import type { DogRef, UploadJob } from "./uploadApi";
 
 const BASE = "/api/forum";
 
@@ -17,11 +17,13 @@ export type ReactionSummary = {
   myReaction: ReactionKind | null;
 };
 
+/** The shared match behind a post: the author's upload plus the dog it drew. */
 export type PostImage = {
   jobId: number;
-  breedName: string | null;
-  trait: string | null;
-  confidence: number | null;
+  dog: DogRef | null;
+  dogIndex: number | null;
+  score: number | null;
+  sharedTraits: string[];
 };
 
 export type ForumPost = ReactionSummary & {
