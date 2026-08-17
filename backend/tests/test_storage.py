@@ -7,6 +7,7 @@ traceback, and that running the ingest twice is a no-op.
 import sys
 from pathlib import Path
 
+import ingest_dogs
 import pytest
 from conftest import make_image
 from PIL import Image
@@ -265,6 +266,19 @@ def test_discover_reads_the_split_out_of_the_afhq_layout(tmp_path):
     splits = {slug: split for _, slug, split in ingest_dogs.discover(source)}
 
     assert splits == {"a": "train", "b": "val"}
+
+
+def test_discover_skips_the_cats_and_the_wild_animals(tmp_path):
+    """AFHQ ships three classes side by side, so pointing --source at the
+    extracted archive must not ingest 16,130 animals instead of 5,239 dogs."""
+    source = tmp_path / "afhq"
+    for animal in ("dog", "cat", "wild"):
+        (source / "train" / animal).mkdir(parents=True)
+        (source / "train" / animal / f"{animal}_1.jpg").write_bytes(make_image(64, 64))
+
+    slugs = {slug for _, slug, _ in ingest_dogs.discover(source)}
+
+    assert slugs == {"dog_1"}
 
 
 def test_a_manifest_that_disagrees_with_the_database_is_fatal(tmp_path):

@@ -186,17 +186,18 @@ moving regularly, switch to Alembic rather than growing that script.
 
 ### 5.1 Running it
 
-`backend/scripts/ingest_dogs.py` takes a path to the extracted AFHQ dog folder.
-It accepts both the dataset's own `train/dog` + `val/dog` layout and a flat
-directory of images.
+`backend/scripts/ingest_dogs.py` takes a path to the extracted dataset. Point it
+at the whole AFHQ archive and it finds the dogs itself — cats and wild animals
+are skipped by directory name, and `train`/`val` become the `source_split` — or
+point it at a flat folder of dog photos and it takes everything.
 
 ```bash
-# locally, against a checkout of the Kaggle dataset
-python scripts/ingest_dogs.py --source ~/afhq/dog
+# locally, against the extracted Kaggle download
+python scripts/ingest_dogs.py --source ~/Downloads/afhq
 
 # on the VM, once
-scp -r ~/afhq/dog azureuser@<vm-ip>:~/afhq-dog
-docker compose run --rm -v ~/afhq-dog:/seed:ro model \
+scp -r ~/Downloads/afhq azureuser@<vm-ip>:~/afhq
+docker compose run --rm -v ~/afhq:/seed:ro model \
     python scripts/ingest_dogs.py --source /seed
 ```
 

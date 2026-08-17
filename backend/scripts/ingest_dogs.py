@@ -38,6 +38,12 @@ from app.storage.imaging import ImageRejected, write_derivatives  # noqa: E402
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
+# AFHQ ships three classes side by side (afhq/train/{cat,dog,wild}), so
+# pointing --source at the extracted archive would otherwise ingest 16,130
+# animals instead of 5,239 dogs. Skipped by directory name; a folder that
+# holds only dogs has none of these and is taken whole.
+NON_DOG_DIRS = {"cat", "cats", "wild"}
+
 # Where the frontend's copy of the corpus ordering lives. Only reachable when
 # running from a full checkout — the backend image doesn't ship the frontend.
 MANIFEST_PATH = BACKEND_DIR.parent / "src" / "lib" / "dogImages.json"
@@ -51,7 +57,8 @@ def discover(source: Path) -> list[tuple[Path, str, str]]:
 
     Handles both AFHQ's own ``train/dog`` + ``val/dog`` layout and a flat
     directory, because which one you get depends on how the Kaggle archive was
-    unpacked and it is not worth making the operator care.
+    unpacked and it is not worth making the operator care. Cats and wild
+    animals are skipped, so ``--source`` can point at the whole archive.
     """
     if not source.is_dir():
         raise SystemExit(f"--source {source} is not a directory")
@@ -62,6 +69,8 @@ def discover(source: Path) -> list[tuple[Path, str, str]]:
             continue
         # "train" / "val" if either appears in the path, else "unknown".
         parts = {p.lower() for p in path.relative_to(source).parts}
+        if parts & NON_DOG_DIRS:
+            continue
         split = "train" if "train" in parts else "val" if "val" in parts else "unknown"
         found.append((path, path.stem, split))
 

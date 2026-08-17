@@ -145,11 +145,11 @@ Copy the extracted dog folder up, then run the ingest inside the backend
 container:
 
 ```bash
-scp -r ~/afhq/dog <SSH_USER>@<SSH_HOST>:~/afhq-dog
+scp -r ~/Downloads/afhq <SSH_USER>@<SSH_HOST>:~/afhq
 ```
 
 ```bash
-cd ~/dogppelganger && docker compose run --rm -v ~/afhq-dog:/seed:ro model python scripts/ingest_dogs.py --source /seed
+cd ~/dogppelganger && docker compose run --rm -v ~/afhq:/seed:ro model python scripts/ingest_dogs.py --source /seed
 ```
 
 It takes a few minutes for 5,239 images and is safe to interrupt and re-run.
