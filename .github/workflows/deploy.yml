@@ -43,6 +43,12 @@ jobs:
           context: ./backend
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/dogppelganger-model:latest
+          # The first build stage installs PyTorch and exports CLIP to ONNX,
+          # which takes minutes. Caching it in GitHub Actions means that layer
+          # is reused on every later deploy and only rebuilt when
+          # requirements-ml.txt actually changes.
+          cache-from: type=gha,scope=model
+          cache-to: type=gha,scope=model,mode=max
 
   deploy:
     name: Deploy to VM over SSH

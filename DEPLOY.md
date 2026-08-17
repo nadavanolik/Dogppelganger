@@ -153,14 +153,41 @@ cd ~/dogppelganger && docker compose run --rm -v ~/afhq:/seed:ro model python sc
 ```
 
 It takes a few minutes for 5,239 images and is safe to interrupt and re-run.
-Confirm it worked:
+
+### Embed the corpus and calibrate (once, straight after seeding)
+
+Matching needs vectors, not just pixels. Both passes use the ONNX encoder that
+is already baked into the image, so neither needs PyTorch on the VM.
 
 ```bash
-curl http://<SSH_HOST>/api/dogs/stats     # -> {"total":5239,...}
+cd ~/dogppelganger && docker compose run --rm model python scripts/embed_dogs.py
 ```
 
-`total: 0` means the corpus is still empty. See `DATA_STORAGE.md` §5 for the
-full ingest contract.
+Then the human reference statistics — any folder of face photos works; LFW is
+a convenient, freely available one. The images are read and discarded, and only
+aggregate statistics are stored:
+
+```bash
+curl -L -o lfw.tgz https://ndownloader.figshare.com/files/5976018 && tar xzf lfw.tgz
+```
+
+> That figshare address is a mirror of Labeled Faces in the Wild. The original UMass
+> host (`vis-www.cs.umass.edu`) no longer resolves. Any folder of face photos
+> works — LFW is only a convenient, freely available default.
+
+```bash
+cd ~/dogppelganger && docker compose run --rm -v ~/lfw:/faces:ro model python scripts/calibrate_humans.py --source /faces
+```
+
+Confirm the whole thing worked:
+
+```bash
+curl http://<SSH_HOST>/api/dogs/stats     # -> {"total":5239,"embedded":5239,...}
+```
+
+`total: 0` means the corpus is still empty; `embedded: 0` means it has pixels
+but no vectors and every match will fail with a message saying so. See
+`DATA_STORAGE.md` §5 and §7 for the full contracts.
 
 On the VM you can inspect things with:
 
@@ -200,9 +227,9 @@ npm run dev
 
 ## Notes / future work
 
-- `backend/app/model.py` is a **placeholder** matcher: it picks a real dog out
-  of the corpus by hashing the photo, which is stable and end-to-end correct
-  but is not yet similarity. Swap the one `match_dog()` function for the real
-  model — nothing else changes. See `DATA_STORAGE.md` §7.
+- Matching is CLIP retrieval with species-mean centring and a shared text
+  attribute space (`backend/app/ml`, `DATA_STORAGE.md` §7). PyTorch is not in
+  the runtime image: the encoder is exported to ONNX in a discarded Docker
+  build stage, so the container carries the model without the framework.
 - HTTPS: put a real domain + TLS (e.g. Caddy or nginx + certbot) in front later.
   For now the site is served over plain HTTP on port 80.

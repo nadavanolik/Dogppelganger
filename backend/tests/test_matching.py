@@ -1,10 +1,15 @@
 """Upload -> store -> match, over the real API.
 
-The model itself is still a placeholder (app/model.py), so what these assert is
-the *contract around* it: that a photo is sanitised and stored before anything
-looks at it, that a match names a real row of `dog_assets`, and that an empty
-corpus fails loudly instead of showing a blank card.
+What these assert is the *contract around* the model: that a photo is sanitised
+and stored before anything looks at it, that a match names a real row of
+`dog_assets`, and that an empty or un-embedded corpus fails loudly instead of
+showing a blank card. The matching arithmetic itself is covered in test_ml.py.
+
+Tests that need a working matcher use the `matcher` fixture, which builds one
+over a synthetic corpus with a 6KB stand-in encoder — CLIP's 350MB export is
+gitignored and CI does not have it.
 """
+import base64
 import time
 
 import pytest
@@ -23,6 +28,11 @@ def _upload(client, owner: str, files, urgent="[]"):
 
 def one_image(name="me.jpg", **kwargs):
     return [("files", (name, make_image(**kwargs), "image/jpeg"))]
+
+
+def _b64(**kwargs) -> str:
+    """A real encoded image, base64'd — what POST /api/match now expects."""
+    return base64.b64encode(make_image(**kwargs)).decode()
 
 
 # ------------------------------------------------------------------ storing
@@ -137,34 +147,50 @@ def test_the_full_resolution_original_is_not_servable(client):
 
 def test_matching_an_empty_corpus_fails_loudly(client):
     """Better a 503 that names the fix than a match against nothing."""
-    res = client.post("/api/match", json={"image": "anything"})
+    res = client.post("/api/match", json={"image": _b64()})
 
     assert res.status_code == 503
     assert "ingest_dogs" in res.json()["detail"]
 
 
-def test_a_match_names_a_real_dog(client, dog_corpus):
-    res = client.post("/api/match", json={"image": "a photo of me"})
+def test_match_needs_an_actual_image(client):
+    assert client.post("/api/match", json={}).status_code == 422
+    assert client.post("/api/match", json={"image": "not base64!!"}).status_code == 422
+
+
+def test_match_accepts_a_data_url(client, matcher):
+    """Browsers hand out `data:image/png;base64,...` from a canvas or a file
+    reader, so accepting the prefix saves every caller stripping it."""
+    res = client.post("/api/match", json={"image": "data:image/jpeg;base64," + _b64()})
+
+    assert res.status_code == 201
+
+
+def test_a_match_names_a_real_dog(client, matcher, dog_corpus):
+    res = client.post("/api/match", json={"image": _b64()})
 
     assert res.status_code == 201
     body = res.json()
     assert body["dog"]["slug"] in dog_corpus
     assert body["dogIndex"] is not None
     assert 0 <= body["score"] <= 1
-    assert len(body["sharedTraits"]) == 2
+    # Shared traits are only reported where the person and the dog are *both*
+    # above average, so an unremarkable pair legitimately shares none.
+    assert len(body["sharedTraits"]) <= 3
     assert "breedName" not in body, "AFHQ has no breed labels — we stopped claiming them"
 
 
-def test_the_same_photo_always_matches_the_same_dog(client, dog_corpus):
+def test_the_same_photo_always_matches_the_same_dog(client, matcher, dog_corpus):
     """Stability matters for demos: a page refresh must not reroll the answer."""
-    first = client.post("/api/match", json={"image": "stable"}).json()
-    second = client.post("/api/match", json={"image": "stable"}).json()
+    payload = _b64(colour=(90, 30, 200))
+    first = client.post("/api/match", json={"image": payload}).json()
+    second = client.post("/api/match", json={"image": payload}).json()
 
     assert first["dog"]["slug"] == second["dog"]["slug"]
     assert first["sharedTraits"] == second["sharedTraits"]
 
 
-def test_a_queued_upload_ends_up_matched_to_a_dog(client, dog_corpus):
+def test_a_queued_upload_ends_up_matched_to_a_dog(client, matcher, dog_corpus):
     """The whole path: multipart in, worker picks it up, dog comes out."""
     [job] = _upload(client, "own_e2e", one_image()).json()["created"]
 

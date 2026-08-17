@@ -18,9 +18,13 @@ hardcoded breed names.
 
 So there are three jobs, in order:
 
-1. **Store the dog corpus** so the site can actually show a dog. ← *this phase*
-2. **Store user photos** safely, and the human↔dog pair each match produces. ← *this phase*
-3. **Replace the hash stub** with real retrieval over the corpus. ← *next phase*
+1. **Store the dog corpus** so the site can actually show a dog. (§2-5)
+2. **Store user photos** safely, and the human↔dog pair each match produces. (§3-4)
+3. **Replace the hash stub** with real retrieval over the corpus. (§7)
+
+All three are done. What remains is judgement, not code: nobody has yet run the
+pipeline over the real AFHQ corpus and looked at whether the dogs resemble the
+people — see §7.6.
 
 ---
 
@@ -86,8 +90,8 @@ breed_name, trait, confidence   →   dog_asset_id, score, shared_traits
 ```
 
 `shared_traits` is the *explanation* — the attributes the person and the dog
-scored alike on ("fluffy", "sleepy eyes", "long face"). It is a column now,
-populated for real in the next phase (§7).
+scored alike on ("fluffy", "sleepy eyes", "long face"), computed by the
+attribute bridge in §7.
 
 ---
 
@@ -130,9 +134,22 @@ does — `docker compose up -d` never touches a named volume.
 | `source_split` | str | `train` / `val`, kept for provenance |
 | `width`, `height`, `byte_size` | int | of the archival derivative |
 | `manifest_index` | int, unique | position in `src/lib/dogImages.json` — see §5.3 |
-| `embedding` | bytes | `float32` vector, `np.ndarray.tobytes()`; NULL until phase 2 |
+| `embedding` | bytes | `float32` vector, `np.ndarray.tobytes()`; NULL until `embed_dogs.py` runs |
 | `embedding_dim`, `embedding_model` | int, str | so a model swap invalidates cleanly |
-| `attributes`, `attribute_set` | bytes, str | the attribute vector behind `shared_traits` |
+| `attributes`, `attribute_set` | bytes, str | the attribute vector behind `shared_traits` (§7.1) |
+
+### 4.1b `calibrations` — the human side
+
+One row: the mean CLIP embedding of a reference set of human faces, plus the
+mean and standard deviation of their attribute scores. This is what §7.1's
+centring subtracts and what the attribute z-scores divide by.
+
+Only the human side is stored. Dog statistics are derived from the corpus at
+load time so they cannot describe a different set of vectors than the ones they
+are applied to; the human side has no such source, so it is computed once by
+`scripts/calibrate_humans.py`. `model` and `attribute_set` are part of the
+unique key — statistics from one encoder are meaningless applied to another's
+vectors, and the mismatch must be detectable rather than silently wrong.
 
 ### 4.2 Why raw bytes instead of a vector index
 
@@ -259,35 +276,109 @@ job deletes its derivatives. Default unless someone says otherwise.
 
 ---
 
-## 7. The model seam (next phase)
+## 7. The matching model
 
-`backend/app/model.py` exposes exactly one function:
+**The constraint that shapes everything: there are no human/dog training
+pairs.** Nothing supervised is possible — no fine-tuning, no learned
+projection, no ground truth to fit. Matching is zero-shot on top of CLIP.
 
-```python
-def match_dog(db: Session, image_path: Path) -> DogMatchResult
-```
+### 7.1 Why the obvious approach fails
 
-Today it is a deterministic stub that hashes the file's checksum and picks a
-real dog from `dog_assets` — the whole stack works end to end, it just isn't
-*similarity* yet. **Only this function changes next phase.** The queue, the
-routers, the schema and the frontend are already speaking in dog references.
+Embed both with CLIP, take the cosine, return the nearest dog — and you get an
+effectively random dog, and often the *same* dog for everybody. CLIP embeddings
+are dominated by *what kind of thing* is pictured: every dog lands in one tight
+cluster, every human in another, and the gap between the clusters swamps the
+variation within them. Two corrections fix it, and both are load-bearing.
 
-The plan for the real one, given that we have **no human↔dog training pairs**:
+**Species-mean centring.** Subtract the mean dog vector from every dog and the
+mean human vector from every human before comparing. That throws away "is a
+dog" versus "is a person" — a constant offset carrying no information about
+resemblance — and leaves how each face differs from its own kind, which is the
+axis resemblance actually lives on.
 
-1. **CLIP image embeddings** for both sides.
-2. **Species-mean centring** — subtract the mean human embedding from human
-   vectors and the mean dog embedding from dog vectors before comparing. Raw
-   CLIP cosine between a person and a dog is dominated by "human vs dog", which
-   makes the nearest dog nearly random; centring removes that shared direction.
-3. **A text-attribute bridge** — score both species against the same CLIP text
-   prompts ("fluffy", "grumpy", "long face", "sleepy eyes") and match in that
-   shared, species-invariant space. This is also what makes `shared_traits`
-   explainable rather than a bare percentage.
+**A shared attribute space.** Score both species against the same sixteen text
+prompts (`app/ml/attributes.py`) and compare *those* scores. Species-neutral by
+construction, and the only part of the pipeline that can say **why** — the
+traits where both the person and the dog are unusually high.
 
-Blocked on knowing the VM's specs — CLIP ViT-B/32 wants ~1 GB of RAM, which an
-Azure B1s does not have.
+The two are blended evenly (`MATCH_EMBEDDING_WEIGHT`, default 0.5): the
+embedding side carries more information, the attribute side generalises better
+across the species gap and is much harder to fool.
 
----
+> **The attribute prompts must be mean-centred, and this is not cosmetic.**
+> CLIP's text embeddings sit in a narrow cone. Straight out of the model, every
+> pair of our sixteen attributes scored ~+0.85 against every other — "fluffy"
+> and "sleek", opposites, came out at +0.862 — so each score was mostly
+> measuring the cone rather than the trait. Subtracting the mean attribute
+> takes fluffy/sleek to **-0.145**, keeps fluffy/shaggy positive at +0.384,
+> puts golden/dark at +0.005, and drops mean pairwise similarity from +0.851 to
+> **-0.065**: a near-orthogonal vocabulary instead of sixteen near-copies.
+> `scripts/export_encoder.py` does it; two tests guard it, because dropping it
+> degrades matching badly and *silently*.
+
+### 7.2 Face cropping
+
+AFHQ dogs are tight, centred head crops; an upload is whatever was on someone's
+phone. Without cropping, most of a human vector describes the sofa. `app/ml/faces.py`
+detects with YuNet (232KB, vendored) and crops to a square with 45% margin to
+match AFHQ's framing. **No face means no match** — which is also the
+guidelines' "robust to a picture meant to make the model not output a dog": a
+photo of a sandwich gets a clear rejection, not a confident dog.
+
+### 7.3 Packaging: ONNX at runtime, PyTorch never
+
+PyTorch is ~2GB and CI pushes and the VM pulls the image on every deploy, so it
+does not ship. `scripts/export_encoder.py` exports CLIP's image tower to ONNX
+once; the container runs it under onnxruntime (~15MB). The backend `Dockerfile`
+does this in a **discarded first stage**: torch is installed there, the export
+runs, and only the resulting graph is copied forward. The export layer is cached
+in GitHub Actions, so it is rebuilt only when `requirements-ml.txt` changes.
+
+Only the *image* tower is exported — the text tower's whole job is those sixteen
+fixed prompts, so it runs once offline and the vectors are committed (32KB).
+
+### 7.4 The three offline passes
+
+| Script | Needs | Run when |
+|---|---|---|
+| `export_encoder.py` | `requirements-ml.txt` (torch) | once per model change; the Docker build does it for production |
+| `embed_dogs.py` | runtime deps only | after `ingest_dogs.py`, and after any vocabulary change |
+| `calibrate_humans.py` | runtime deps + a folder of face photos | once per model change |
+
+`embed_dogs.py` deliberately needs no PyTorch — it uses the exported graph, so
+dogs and uploads go through byte-identical preprocessing, and it can run on the
+VM exactly like the ingest.
+
+`calibrate_humans.py` computes the human mean and spread from a reference face
+set (LFW is convenient and freely available). **The images are read and thrown
+away** — only aggregate statistics are stored, so there is no dataset to
+redistribute and no face is retained. The dog statistics are *not* stored: they
+are derived from the corpus at load time, so they cannot drift out of step with
+the vectors they describe.
+
+### 7.5 The score
+
+The number shown to a user is **distinctiveness**, not probability: where the
+winning similarity sits in the corpus's own distribution, squashed to 0-1. A
+high number means "this dog fits much better than the other 5,238", not "97%
+likely correct". The raw cosine would be useless on its own — after centring it
+lands in a narrow band where 0.19 is a great match.
+
+### 7.6 What has been verified
+
+- The ONNX export agrees with PyTorch to **2e-6** (checked by the export script
+  itself, which refuses to ship a graph that drifts past 1e-3).
+- The full runtime path — our preprocessing plus the exported graph — correctly
+  zero-shot-captions a real photograph, picking the true caption at +0.300
+  against +0.181/+0.175/+0.126 for distractors. A preprocessing bug would show
+  up here.
+- The attribute vocabulary is near-orthogonal and opposites oppose (above).
+
+**Not yet verified:** end-to-end match *quality* on the real AFHQ corpus with
+real faces, because neither dataset is on the development machine. The
+arithmetic is fully tested against a 6KB stand-in encoder; the judgement of
+whether the dogs actually look like the people needs a human running §7.4 on
+the real data.
 
 ## 8. Testing
 

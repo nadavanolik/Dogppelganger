@@ -97,6 +97,48 @@ class DogAsset(Base):
         }
 
 
+class Calibration(Base):
+    """Human-side population statistics — what makes cross-species comparison work.
+
+    CLIP embeddings are dominated by *what kind of thing* is pictured: every dog
+    sits in one tight cluster and every human in another, so a raw cosine
+    between a person and a dog is nearly constant and its ranking is noise.
+    Subtracting each species' own mean removes that shared direction and leaves
+    the within-species variation — unusually fluffy, unusually dark, unusually
+    long-faced — which is the axis resemblance actually lives on.
+
+    Only the *human* side is stored. The dog statistics are derived from the
+    corpus at load time, so they cannot drift out of step with the vectors they
+    describe; the human side has no such source, which is why it is computed
+    once from a reference face set (see scripts/calibrate_humans.py).
+
+    ``model`` and ``attribute_set`` are part of the unique key: statistics from
+    one encoder are meaningless applied to another's vectors, and a mismatch
+    must be detectable rather than silently wrong.
+    """
+
+    __tablename__ = "calibrations"
+    __table_args__ = (
+        UniqueConstraint("species", "model", "attribute_set", name="uq_calibration_space"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    species = Column(String(10), nullable=False, default="human")
+    model = Column(String(64), nullable=False)
+    attribute_set = Column(String(64), nullable=False)
+
+    embedding_dim = Column(Integer, nullable=False)
+    attribute_dim = Column(Integer, nullable=False)
+
+    # float32 blobs, same convention as DogAsset — see app/ml/vectors.py.
+    embedding_mean = Column(LargeBinary, nullable=False)
+    attribute_mean = Column(LargeBinary, nullable=False)
+    attribute_std = Column(LargeBinary, nullable=False)
+
+    sample_count = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Match(Base):
     """A completed human -> dog match.
 

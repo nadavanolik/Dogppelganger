@@ -36,3 +36,9 @@ backend/data/
 *.sw?
 
 /public/dogs/
+
+# Datasets downloaded for the one-time ingest/calibration passes. Never
+# committed — see DATA_STORAGE.md 5.1.
+/afhq/
+/lfw/
+*.tgz
