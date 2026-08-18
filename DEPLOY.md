@@ -223,6 +223,16 @@ npm install
 npm run dev
 ```
 
+> **On macOS, port 5000 is taken.** Since Monterey, AirPlay Receiver
+> (ControlCenter) listens on it and answers every request with `403` — which
+> looks exactly like a broken backend. Run both halves elsewhere instead:
+> `PORT=5001 python main.py` and `API_PORT=5001 npm run dev`. (Turning AirPlay
+> Receiver off in System Settings → General → AirDrop & Handoff also works.)
+
+Matching needs the corpus before it will do anything locally: `ingest_dogs.py`,
+then `embed_dogs.py`, then `calibrate_humans.py` — `DATA_STORAGE.md` §5 and
+§7.4. `curl localhost:5001/api/dogs/stats` tells you where you are.
+
 ---
 
 ## Notes / future work
