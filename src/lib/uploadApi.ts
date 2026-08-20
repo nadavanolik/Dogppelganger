@@ -11,6 +11,16 @@ const BASE = "/api/uploads";
 export type UploadStatus = "queued" | "processing" | "done" | "error";
 
 /**
+ * One trait the person and their dog are both unusually high on.
+ *
+ * `strength` is the weaker side's percentile (see `_trait_strength` in
+ * backend/app/ml/matcher.py) — "both of them are at least this far up the
+ * corpus on this trait". It is null on matches made before strengths were
+ * recorded, which render as the label alone.
+ */
+export type SharedTrait = { label: string; strength: number | null };
+
+/**
  * The dog a photo was matched to — a row of `dog_assets`, not a breed label.
  *
  * AFHQ carries no breed annotations, so the API stopped claiming them: what
@@ -42,7 +52,7 @@ export type UploadJob = {
   dogIndex: number | null;
   /** Similarity, 0..1. Not a classifier's confidence. */
   score: number | null;
-  sharedTraits: string[];
+  sharedTraits: SharedTrait[];
   error: string | null;
   createdAt: string | null;
   finishedAt: string | null;

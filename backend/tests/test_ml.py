@@ -131,7 +131,10 @@ def test_a_match_names_a_dog_from_the_corpus(matcher, dog_corpus):
     assert result.slug in dog_corpus
     assert 0.0 <= result.score <= 1.0
     assert len(result.shared_traits) <= 3
-    assert set(result.shared_traits) <= set(attrs.LABELS)
+    assert {t["label"] for t in result.shared_traits} <= set(attrs.LABELS)
+    # A trait only survives with a positive agreement z-score, so Phi(z) puts
+    # every reported strength above the median by construction.
+    assert all(0.5 < t["strength"] <= 1.0 for t in result.shared_traits)
 
 
 def test_the_same_photo_always_gives_the_same_dog(matcher):

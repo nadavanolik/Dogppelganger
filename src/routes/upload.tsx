@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
+import { SharedTraits } from "@/components/MatchPair";
 import { useStore } from "@/lib/store";
 import { uploadApi, uploadImageUrl, type Rejected, type UploadJob } from "@/lib/uploadApi";
 import { useUploadNotifications } from "@/lib/uploadSocket";
@@ -16,8 +17,6 @@ function UploadPage() {
     </AppShell>
   );
 }
-
-const HUMANS = ["🧑", "👩", "🧔", "👨‍🦰", "👩‍🦱", "🧑‍🎤", "👵", "🧑‍🚀", "🧑‍🌾"];
 
 // The browser's <input accept> is only a filter suggestion — a user can still
 // pick "All files", so this is checked again for real (bytes, not just this
@@ -97,11 +96,6 @@ function Upload() {
     if (badFiles.length > 0) setRejected((r) => [...badFiles, ...r]);
   }
 
-  function pickEmoji(e: string) {
-    const m = submitMatch(e, urgent);
-    navigate(`/result/${m.id}`);
-  }
-
   async function submitQueue() {
     if (pending.length === 0 || submitting) return;
     setSubmitting(true);
@@ -166,22 +160,6 @@ function Upload() {
                 className="hidden"
                 onChange={(e) => onSingle(e.target.files)}
               />
-            </div>
-            <div className="mt-6">
-              <div className="text-sm font-bold text-muted-foreground mb-2">
-                No selfie handy? Pick a face:
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {HUMANS.map((e) => (
-                  <button
-                    key={e}
-                    onClick={() => pickEmoji(e)}
-                    className="h-14 w-14 rounded-2xl border-2 border-[var(--ink)] bg-card text-3xl hover:bg-mint shadow-pop-sm"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         ) : (
@@ -371,18 +349,12 @@ function UploadQueue({
                   alt="the matched dog"
                   className="h-10 w-10 object-cover rounded-lg border-2 border-[var(--ink)] shrink-0"
                 />
-                <div className="min-w-0 text-xs text-muted-foreground">
-                  {job.score != null && (
-                    <div className="font-bold text-foreground">
-                      {Math.round(job.score * 100)}% match
-                    </div>
-                  )}
-                  {job.sharedTraits.length > 0 && (
-                    <div className="truncate italic">{job.sharedTraits.join(" · ")}</div>
-                  )}
-                </div>
+                {job.score != null && (
+                  <div className="text-xs font-bold">{Math.round(job.score * 100)}% match</div>
+                )}
               </div>
             )}
+            {job.status === "done" && <SharedTraits traits={job.sharedTraits} />}
             {job.status === "error" && job.error && (
               <div className="mt-1 text-xs text-destructive">{job.error}</div>
             )}

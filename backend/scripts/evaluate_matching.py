@@ -90,7 +90,7 @@ def evaluate(faces_dir: Path, sample: int) -> dict:
         result = matcher.match_embedding(embedding)
         matched.append((path, result.slug))
         for trait in result.shared_traits:
-            trait_counts[trait] = trait_counts.get(trait, 0) + 1
+            trait_counts[trait["label"]] = trait_counts.get(trait["label"], 0) + 1
 
         # How many standard deviations the winner sits above the corpus mean.
         centred = l2_normalize(embedding - matcher._human_embedding_mean)

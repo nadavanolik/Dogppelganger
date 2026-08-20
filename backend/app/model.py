@@ -64,7 +64,7 @@ class DogMatchResult:
     manifest_index: int | None
     slug: str
     score: float
-    shared_traits: list[str] = field(default_factory=list)
+    shared_traits: list[dict] = field(default_factory=list)
 
 
 def match_dog(

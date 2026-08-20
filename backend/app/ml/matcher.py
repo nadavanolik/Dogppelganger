@@ -26,6 +26,7 @@ scan it replaces at this size.
 """
 from __future__ import annotations
 
+import math
 import os
 import threading
 from dataclasses import dataclass, field
@@ -62,7 +63,7 @@ class DogCandidate:
     manifest_index: int | None
     slug: str
     score: float
-    shared_traits: list[str] = field(default_factory=list)
+    shared_traits: list[dict] = field(default_factory=list)
 
 
 class DogMatcher:
@@ -198,17 +199,40 @@ class DogMatcher:
             shared_traits=self._shared_traits(human_z, winner),
         )
 
-    def _shared_traits(self, human_z: np.ndarray, winner: int) -> list[str]:
+    def _shared_traits(self, human_z: np.ndarray, winner: int) -> list[dict]:
         """The attributes this person and this dog are *both* unusually high on.
 
         `min` of the two z-scores, not the product or the sum: an attribute only
         counts as shared if neither side is merely average, and a product would
         let two strong negatives ("both unusually un-fluffy") masquerade as
         agreement.
+
+        Each trait carries the strength behind it, so the UI can say *how*
+        strongly the two share it rather than just listing words. Returned as
+        plain dicts because this goes straight into a JSON column.
         """
         agreement = np.minimum(human_z, self._dog_attribute_z[winner])
         ranked = np.argsort(agreement)[::-1][:MAX_SHARED_TRAITS]
-        return [attrs.LABELS[k] for k in ranked if agreement[k] > 0]
+        return [
+            {"label": attrs.LABELS[k], "strength": _trait_strength(float(agreement[k]))}
+            for k in ranked
+            if agreement[k] > 0
+        ]
+
+
+def _trait_strength(agreement: float) -> float:
+    """A shared-trait z-score as a percentile, for showing to a reader.
+
+    `agreement` is the *weaker* of the two sides (see `_shared_traits`), so
+    Phi(z) reads as "both of them are at least this far up the corpus on this
+    trait" — 0.78 meaning neither is below the 78th percentile for fluffiness.
+    That is a statement about the pair, which is what the number is captioning.
+
+    Deliberately not a probability of anything: nothing here estimates how
+    likely the match is to be *right*, and a percentage that implied otherwise
+    would be the most misleading number on the page.
+    """
+    return round(0.5 * (1.0 + math.erf(agreement / math.sqrt(2.0))), 3)
 
 
 def _distinctiveness(scores: np.ndarray, winner: int) -> float:

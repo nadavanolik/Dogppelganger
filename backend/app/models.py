@@ -19,6 +19,24 @@ from .database import Base
 from .storage import layout
 
 
+def shared_traits_payload(raw) -> list[dict]:
+    """Normalise the `shared_traits` JSON column for the wire.
+
+    Rows written before traits carried a strength hold plain strings, and they
+    are not worth a migration — a match keeps its meaning without the number,
+    and rewriting historical rows would mean inventing strengths that were
+    never measured. So both shapes are accepted and old rows report
+    `strength: null`, which the UI renders as the label alone.
+    """
+    payload: list[dict] = []
+    for item in raw or []:
+        if isinstance(item, str):
+            payload.append({"label": item, "strength": None})
+        elif isinstance(item, dict) and item.get("label"):
+            payload.append({"label": item["label"], "strength": item.get("strength")})
+    return payload
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -171,7 +189,7 @@ class Match(Base):
             "dog": self.dog.as_dict() if self.dog else None,
             "dogIndex": self.dog.manifest_index if self.dog else None,
             "score": self.score,
-            "sharedTraits": self.shared_traits or [],
+            "sharedTraits": shared_traits_payload(self.shared_traits),
             "createdAt": self.created_at.isoformat() if self.created_at else None,
         }
 
@@ -227,7 +245,7 @@ class UploadJob(Base):
             "dog": self.dog.as_dict() if self.dog else None,
             "dogIndex": self.dog.manifest_index if self.dog else None,
             "score": self.score,
-            "sharedTraits": self.shared_traits or [],
+            "sharedTraits": shared_traits_payload(self.shared_traits),
             "error": self.error,
             "createdAt": self.created_at.isoformat() if self.created_at else None,
             "finishedAt": self.finished_at.isoformat() if self.finished_at else None,
