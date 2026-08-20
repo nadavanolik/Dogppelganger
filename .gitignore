@@ -42,3 +42,6 @@ backend/data/
 /afhq/
 /lfw/
 *.tgz
+
+# Stray git lock files from an interrupted command; never source.
+/_to_delete/
