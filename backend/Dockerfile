@@ -15,8 +15,14 @@ FROM python:3.12-slim AS encoder
 WORKDIR /build
 ENV PYTHONUNBUFFERED=1
 
-COPY requirements-ml.txt .
-RUN pip install --no-cache-dir -r requirements-ml.txt
+# Both files, not just the ML one. export_encoder.py imports app/ml/encoder.py
+# for its constants, and that module imports onnxruntime; the verify step then
+# runs the exported graph under onnxruntime to check it agrees with PyTorch.
+# Neither is in requirements-ml.txt, and duplicating those pins here would let
+# them drift from the runtime stage — so install the same two files a developer
+# installs. This stage is thrown away, so its size costs nothing.
+COPY requirements.txt requirements-ml.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-ml.txt
 
 # Only what export_encoder.py actually imports, so editing a router doesn't
 # invalidate this layer and re-run a multi-minute export.
