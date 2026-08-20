@@ -4,7 +4,7 @@ import { AppShell, RequireAuth } from "@/components/AppShell";
 import { SharedTraits } from "@/components/MatchPair";
 import { useStore } from "@/lib/store";
 import { uploadApi, uploadImageUrl, type UploadJob } from "@/lib/uploadApi";
-import { useUploadNotifications } from "@/lib/uploadSocket";
+import { useUploadJob } from "@/lib/uploadFeed";
 
 export default ResultPage;
 
@@ -54,25 +54,25 @@ function Result() {
     };
   }, [owner.id, jobId]);
 
-  // Still queued when the page opened? The socket finishes the job for us, so
-  // the page resolves on its own instead of asking the user to refresh.
-  useUploadNotifications(owner.id, (incoming) => {
-    if (incoming.id === jobId) setJob(incoming);
-  });
+  // The shared feed carries live updates for every job, so a page opened while
+  // the dog is still cooking resolves on its own. It also wins over our own
+  // fetch, which is only there for a deep link that arrives first.
+  const live = useUploadJob(jobId);
+  const shown = live ?? job;
 
   if (error) {
     return <div className="card-pop p-8 text-center">{error}</div>;
   }
-  if (!job) {
+  if (!shown) {
     return <div className="card-pop p-8 text-center text-muted-foreground">Loading…</div>;
   }
 
-  if (job.status === "error") {
+  if (shown.status === "error") {
     return (
       <div className="max-w-3xl mx-auto card-pop p-8 text-center">
         <div className="text-6xl">😞</div>
         <h1 className="font-display text-3xl font-black mt-3">That one didn't work</h1>
-        <p className="text-muted-foreground mt-2">{job.error}</p>
+        <p className="text-muted-foreground mt-2">{shown.error}</p>
         <Link
           to="/upload"
           className="btn-pop btn-pop-hover bg-primary text-primary-foreground inline-block mt-6 px-5 py-2"
@@ -83,15 +83,15 @@ function Result() {
     );
   }
 
-  if (job.status !== "done" || !job.dog) {
+  if (shown.status !== "done" || !shown.dog) {
     return (
       <div className="max-w-3xl mx-auto card-pop p-8 text-center py-12">
         <div className="text-7xl animate-bounce">🐕</div>
         <div className="mt-4 font-display text-3xl font-black">
-          {job.status === "queued" ? "In the queue…" : "Finding your dog…"}
+          {shown.status === "queued" ? "In the queue…" : "Finding your dog…"}
         </div>
         <p className="text-muted-foreground mt-1">
-          {job.urgent ? "🚨 Urgent priority — coming right up." : "This page updates on its own."}
+          {shown.urgent ? "🚨 Urgent priority — coming right up." : "This page updates on its own."}
         </p>
       </div>
     );
@@ -103,16 +103,16 @@ function Result() {
         <div className="text-sm font-bold text-muted-foreground uppercase tracking-wide">
           Your dogppleganger is…
         </div>
-        {job.score != null && (
+        {shown.score != null && (
           <h1 className="font-display text-5xl md:text-6xl font-black mt-1">
-            {Math.round(job.score * 100)}% match
+            {Math.round(shown.score * 100)}% match
           </h1>
         )}
       </div>
 
       <div className="mt-8 flex items-center justify-center gap-6">
         <img
-          src={uploadImageUrl(owner.id, job.id)}
+          src={uploadImageUrl(owner.id, shown.id)}
           alt="your photo"
           className="h-36 w-36 rounded-2xl border-2 border-[var(--ink)] object-cover"
         />
@@ -120,7 +120,7 @@ function Result() {
           →
         </div>
         <img
-          src={job.dog.fullUrl}
+          src={shown.dog.fullUrl}
           alt="the dog you matched"
           className="h-36 w-36 rounded-2xl border-2 border-[var(--ink)] object-cover"
         />
@@ -128,7 +128,7 @@ function Result() {
 
       <div className="mt-8 flex justify-center">
         <div className="max-w-sm">
-          <SharedTraits traits={job.sharedTraits} />
+          <SharedTraits traits={shown.sharedTraits} />
         </div>
       </div>
 
@@ -140,8 +140,8 @@ function Result() {
           📣 Share to the forum
         </Link>
         <a
-          href={job.dog.fullUrl}
-          download={`${job.dog.slug}.jpg`}
+          href={shown.dog.fullUrl}
+          download={`${shown.dog.slug}.jpg`}
           className="btn-pop btn-pop-hover bg-card px-5 py-2"
         >
           ⬇️ Download the dog

@@ -3,8 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
 import { SharedTraits } from "@/components/MatchPair";
 import { useStore } from "@/lib/store";
-import { uploadApi, uploadImageUrl, type Rejected, type UploadJob } from "@/lib/uploadApi";
-import { useUploadNotifications } from "@/lib/uploadSocket";
+import { uploadApi, type Rejected } from "@/lib/uploadApi";
+import { useUploadFeed } from "@/lib/uploadFeed";
 
 export default UploadPage;
 
@@ -34,34 +34,10 @@ function Upload() {
   const single = useRef<HTMLInputElement>(null);
 
   // --------------------------------------------------------- multi / queue
+  const { add: addToFeed } = useUploadFeed();
   const [pending, setPending] = useState<PendingImage[]>([]);
   const [rejected, setRejected] = useState<Rejected[]>([]);
-  const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    uploadApi
-      .list(owner.id)
-      .then((rows) => {
-        if (!cancelled) setJobs(rows);
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setLoadError(err instanceof Error ? err.message : "Couldn't load your queue.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [owner.id]);
-
-  useUploadNotifications(owner.id, (job) => {
-    setJobs((prev) => {
-      const exists = prev.some((j) => j.id === job.id);
-      return exists ? prev.map((j) => (j.id === job.id ? job : j)) : [job, ...prev];
-    });
-  });
 
   async function readFile(f: File) {
     return new Promise<string>((res) => {
@@ -85,6 +61,7 @@ function Upload() {
         setRejected((r) => [...res.rejected, ...r]);
         return;
       }
+      addToFeed(res.created);
       navigate(`/result/${created.id}`);
     } catch (err) {
       setRejected((r) => [
@@ -122,9 +99,13 @@ function Upload() {
         owner.id,
         pending.map((p) => ({ file: p.file, urgent: p.urgent })),
       );
-      setJobs((prev) => [...res.created, ...prev]);
+      addToFeed(res.created);
       if (res.rejected.length > 0) setRejected((r) => [...res.rejected, ...r]);
       setPending([]);
+      // Both modes now hand off to a page that shows progress rather than
+      // leaving the user on the form. A single photo has its own result page;
+      // a batch goes to My dogs, where each card resolves in place.
+      if (res.created.length > 0) navigate("/profile");
     } catch (err) {
       setRejected((r) => [
         { filename: "", reason: err instanceof Error ? err.message : "Upload failed." },
@@ -253,8 +234,6 @@ function Upload() {
                 </button>
               </div>
             )}
-
-            <UploadQueue ownerId={owner.id} jobs={jobs} loadError={loadError} />
           </div>
         )}
       </div>
@@ -285,85 +264,6 @@ function Upload() {
           Multi-upload runs in the background so you can browse the forum while dogs cook.
         </div>
       </aside>
-    </div>
-  );
-}
-
-const STATUS_LABEL: Record<UploadJob["status"], string> = {
-  queued: "⏳ queued",
-  processing: "🐾 processing",
-  done: "✅ done",
-  error: "⚠️ error",
-};
-
-const STATUS_CLASS: Record<UploadJob["status"], string> = {
-  queued: "bg-sky text-sky-foreground",
-  processing: "bg-sunshine text-sunshine-foreground animate-pulse",
-  done: "bg-mint text-mint-foreground",
-  error: "bg-destructive text-destructive-foreground",
-};
-
-function UploadQueue({
-  ownerId,
-  jobs,
-  loadError,
-}: {
-  ownerId: string;
-  jobs: UploadJob[];
-  loadError: string | null;
-}) {
-  if (loadError) {
-    return <div className="mt-6 text-sm text-destructive">{loadError}</div>;
-  }
-  if (jobs.length === 0) return null;
-
-  return (
-    <div className="mt-8">
-      <div className="font-display text-xl font-bold mb-3">Your queue</div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {jobs.map((job) => (
-          <div key={job.id} className="card-pop-sm p-2">
-            <div className="relative">
-              <img
-                src={uploadImageUrl(ownerId, job.id)}
-                className="w-full aspect-square object-cover rounded-lg border-2 border-[var(--ink)]"
-                alt={job.filename}
-              />
-              {job.urgent && (
-                <span className="absolute top-1 left-1 text-lg" title="Urgent">
-                  🚨
-                </span>
-              )}
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-1">
-              <span className="text-xs font-bold truncate" title={job.filename}>
-                {job.filename}
-              </span>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border border-[var(--ink)] shrink-0 ${STATUS_CLASS[job.status]}`}
-              >
-                {STATUS_LABEL[job.status]}
-              </span>
-            </div>
-            {job.status === "done" && job.dog && (
-              <div className="mt-2 flex items-center gap-2">
-                <img
-                  src={job.dog.thumbUrl}
-                  alt="the matched dog"
-                  className="h-10 w-10 object-cover rounded-lg border-2 border-[var(--ink)] shrink-0"
-                />
-                {job.score != null && (
-                  <div className="text-xs font-bold">{Math.round(job.score * 100)}% match</div>
-                )}
-              </div>
-            )}
-            {job.status === "done" && <SharedTraits traits={job.sharedTraits} />}
-            {job.status === "error" && job.error && (
-              <div className="mt-1 text-xs text-destructive">{job.error}</div>
-            )}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

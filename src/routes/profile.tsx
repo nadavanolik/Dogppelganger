@@ -1,8 +1,10 @@
 import { Link } from "react-router-dom";
 import { useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
-import { DogCard } from "@/components/DogCard";
+import { SharedTraits } from "@/components/MatchPair";
 import { useStore } from "@/lib/store";
+import { uploadImageUrl, type UploadJob } from "@/lib/uploadApi";
+import { useUploadFeed } from "@/lib/uploadFeed";
 
 export default Profile;
 
@@ -16,17 +18,26 @@ function Profile() {
   );
 }
 
-type Filter = "all" | "shared" | "private";
+type Filter = "all" | "done" | "cooking";
+
+const STATUS_LABEL: Record<string, string> = {
+  queued: "⏳ queued",
+  processing: "🐾 finding your dog",
+  done: "✅ done",
+  error: "⚠️ error",
+};
 
 function Inner() {
-  const { state, shareMatch, discardMatch } = useStore();
+  const { state } = useStore();
+  const { jobs, loading, error } = useUploadFeed();
   const me = state.user!;
   const [filter, setFilter] = useState<Filter>("all");
 
-  const mine = state.matches.filter((m) => m.userId === me.id);
-  const done = mine.filter((m) => m.status === "done");
-  const shared = done.filter((m) => m.shared);
-  const privateDogs = done.filter((m) => !m.shared);
+  // Every match, straight from the server. This used to read the localStorage
+  // mock, so a dog you actually made never appeared here and one you never
+  // made always did.
+  const done = jobs.filter((j) => j.status === "done");
+  const cooking = jobs.filter((j) => j.status === "queued" || j.status === "processing");
 
   const myPosts = state.posts.filter((p) => p.userId === me.id);
   const myComments = state.posts.flatMap((p) => p.comments.filter((c) => c.userId === me.id));
@@ -37,7 +48,7 @@ function Inner() {
     myPosts.reduce((n, p) => n + p.dislikes.length, 0) +
     myComments.reduce((n, c) => n + c.dislikes.length, 0);
 
-  const visible = filter === "shared" ? shared : filter === "private" ? privateDogs : done;
+  const visible = filter === "done" ? done : filter === "cooking" ? cooking : jobs;
 
   return (
     <div className="space-y-8">
@@ -54,7 +65,7 @@ function Inner() {
 
       <div className="grid md:grid-cols-4 gap-4">
         <Stat emoji="🐕" label="Total dogs" value={done.length} />
-        <Stat emoji="📣" label="Shared" value={shared.length} />
+        <Stat emoji="⏳" label="In the queue" value={cooking.length} />
         <Stat emoji="✍️" label="Forum posts" value={myPosts.length} />
         <Stat
           emoji="👍/👎"
@@ -63,26 +74,49 @@ function Inner() {
         />
       </div>
 
+      {cooking.length > 0 && (
+        <div className="card-pop p-4 flex items-center gap-3 bg-sunshine/50">
+          <span className="text-3xl animate-bounce">🐕</span>
+          <div>
+            <div className="font-display text-xl font-bold">
+              {cooking.length} {cooking.length === 1 ? "dog" : "dogs"} still cooking
+            </div>
+            <div className="text-sm text-muted-foreground">
+              They finish on their own — you'll get a notification for each one.
+            </div>
+          </div>
+        </div>
+      )}
+
       <section>
         <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
           <h2 className="font-display text-3xl font-black">My dogs</h2>
+          <Link to="/upload" className="btn-pop btn-pop-hover bg-card px-4 py-1.5 text-sm">
+            + Upload more
+          </Link>
         </div>
 
         <div className="flex gap-2 mb-4 flex-wrap">
           <Tab active={filter === "all"} onClick={() => setFilter("all")}>
-            All ({done.length})
+            All ({jobs.length})
           </Tab>
-          <Tab active={filter === "shared"} onClick={() => setFilter("shared")}>
-            Shared ({shared.length})
+          <Tab active={filter === "done"} onClick={() => setFilter("done")}>
+            Done ({done.length})
           </Tab>
-          <Tab active={filter === "private"} onClick={() => setFilter("private")}>
-            Private ({privateDogs.length})
+          <Tab active={filter === "cooking"} onClick={() => setFilter("cooking")}>
+            In the queue ({cooking.length})
           </Tab>
         </div>
 
-        {visible.length === 0 ? (
+        {error && <div className="card-pop p-6 text-center text-destructive">{error}</div>}
+
+        {!error && loading && jobs.length === 0 && (
+          <div className="card-pop p-8 text-center text-muted-foreground">Loading your dogs…</div>
+        )}
+
+        {!error && !loading && visible.length === 0 ? (
           <div className="card-pop p-8 text-center text-muted-foreground">
-            {done.length === 0 ? (
+            {jobs.length === 0 ? (
               <>
                 No matches yet.{" "}
                 <Link to="/upload" className="underline">
@@ -95,36 +129,60 @@ function Inner() {
           </div>
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {visible.map((m) => (
-              <div key={m.id} className="relative">
-                <DogCard match={m} />
-                <div className="absolute top-2 right-2 flex gap-1">
-                  {m.shared ? (
-                    <span className="text-xs bg-mint px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold">
-                      shared
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => shareMatch(m.id)}
-                      className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded-full border-2 border-[var(--ink)] font-bold"
-                    >
-                      share
-                    </button>
-                  )}
-                  <button
-                    onClick={() => discardMatch(m.id)}
-                    className="text-xs bg-card px-2 py-1 rounded-full border-2 border-[var(--ink)]"
-                  >
-                    🗑
-                  </button>
-                </div>
-              </div>
+            {visible.map((job) => (
+              <MyDog key={job.id} job={job} ownerId={me.id} />
             ))}
           </div>
         )}
       </section>
     </div>
   );
+}
+
+function MyDog({ job, ownerId }: { job: UploadJob; ownerId: string }) {
+  const body = (
+    <div className="card-pop-sm p-3 h-full">
+      <div className="flex items-center gap-2">
+        <img
+          src={uploadImageUrl(ownerId, job.id)}
+          alt={job.filename}
+          className="h-20 w-20 rounded-xl border-2 border-[var(--ink)] object-cover shrink-0"
+        />
+        <span className="text-xl shrink-0" aria-hidden="true">
+          →
+        </span>
+        {job.dog ? (
+          <img
+            src={job.dog.imageUrl}
+            alt="the matched dog"
+            className="h-20 w-20 rounded-xl border-2 border-[var(--ink)] object-cover shrink-0"
+          />
+        ) : (
+          <div className="h-20 w-20 rounded-xl border-2 border-[var(--ink)] bg-muted grid place-items-center text-2xl shrink-0">
+            {job.status === "error" ? "⚠️" : <span className="animate-pulse">🐾</span>}
+          </div>
+        )}
+      </div>
+
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-xs font-bold truncate" title={job.filename}>
+          {job.filename}
+        </span>
+        <span className="text-[10px] font-bold shrink-0">{STATUS_LABEL[job.status]}</span>
+      </div>
+
+      {job.status === "done" && job.score != null && (
+        <div className="text-xs font-bold mt-1">{Math.round(job.score * 100)}% match</div>
+      )}
+      {job.status === "error" && job.error && (
+        <div className="text-xs text-destructive mt-1">{job.error}</div>
+      )}
+      <SharedTraits traits={job.sharedTraits} />
+    </div>
+  );
+
+  // Only a finished match has somewhere to go.
+  return job.status === "done" ? <Link to={`/result/${job.id}`}>{body}</Link> : body;
 }
 
 function Tab({

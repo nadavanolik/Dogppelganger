@@ -153,6 +153,8 @@ type Ctx = {
   // dms
   openConversation: (otherUserId: string, otherUsername: string) => Conversation;
   sendMessage: (conversationId: string, body: string, media?: string) => void;
+  /** A real (server-side) match finished — ring the bell. */
+  notifyMatchReady: (jobId: number, filename: string) => void;
   // notifications
   markAllRead: () => void;
 };
@@ -371,6 +373,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ],
           };
         });
+      },
+      notifyMatchReady(jobId, filename) {
+        const u = state.user;
+        if (!u) return;
+        setState((s) => ({
+          ...s,
+          notifications: [
+            {
+              id: uid("n"),
+              userId: u.id,
+              kind: "match" as const,
+              text: `Your dog for ${filename} is ready!`,
+              href: `/result/${jobId}`,
+              read: false,
+              at: Date.now(),
+            },
+            ...s.notifications,
+          ],
+        }));
       },
       markAllRead() {
         const u = state.user;
