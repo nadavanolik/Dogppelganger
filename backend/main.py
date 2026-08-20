@@ -1,7 +1,7 @@
 """FastAPI entry point.
 
-Local dev:   python main.py            (http://localhost:5000, auto-reload)
-             or: uvicorn main:app --reload --port 5000
+Local dev:   python main.py            (http://localhost:5001, auto-reload)
+             or: uvicorn main:app --reload --port 5001
 Production:  uvicorn main:app --host 0.0.0.0 --port 5000   (see Dockerfile)
 
 Interactive API docs are auto-generated at /docs.
@@ -83,4 +83,4 @@ if __name__ == "__main__":
     # Receiver (ControlCenter/AirTunes) listens there and answers 403, which
     # looks exactly like a broken backend. Set PORT here and API_PORT for the
     # Vite dev proxy to the same value.
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "5000")), reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "5001")), reload=True)

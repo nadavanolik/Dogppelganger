@@ -4,9 +4,12 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import tsConfigPaths from "vite-tsconfig-paths";
 
-// Keep in step with the backend's PORT. macOS AirPlay Receiver occupies 5000,
-// so on a Mac you typically run both with 5001.
-const API_PORT = process.env.API_PORT ?? "5000";
+// Keep in step with the backend's PORT. Defaults to 5001, not 5000, because
+// macOS has claimed 5000 since Monterey: AirPlay Receiver answers there with a
+// 403, which reaches the browser as "Request failed (403)" on upload and looks
+// exactly like a broken backend. Override with API_PORT if you moved it.
+// Docker is unaffected — nginx talks to model:5000 on the container network.
+const API_PORT = process.env.API_PORT ?? "5001";
 
 // Plain Vite + React single-page app (routing handled by react-router-dom).
 export default defineConfig({

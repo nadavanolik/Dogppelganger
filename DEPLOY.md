@@ -212,22 +212,24 @@ docker compose up --build
 **Frontend and backend separately (fastest for development):**
 
 ```bash
-# terminal 1 — FastAPI on :5000 (uses a local SQLite file, no Postgres needed)
+# terminal 1 — FastAPI on :5001 (uses a local SQLite file, no Postgres needed)
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 
-# terminal 2 — React dev server on :5173 (proxies /api to :5000)
+# terminal 2 — React dev server on :5173 (proxies /api to :5001)
 npm install
 npm run dev
 ```
 
-> **On macOS, port 5000 is taken.** Since Monterey, AirPlay Receiver
-> (ControlCenter) listens on it and answers every request with `403` — which
-> looks exactly like a broken backend. Run both halves elsewhere instead:
-> `PORT=5001 python main.py` and `API_PORT=5001 npm run dev`. (Turning AirPlay
-> Receiver off in System Settings → General → AirDrop & Handoff also works.)
+> **Why 5001 and not 5000.** On macOS, AirPlay Receiver (ControlCenter) has
+> listened on 5000 since Monterey and answers every request with `403` — which
+> surfaces in the browser as "Request failed (403)" on upload and looks exactly
+> like a broken backend. Both dev defaults are therefore 5001 and no environment
+> variables are needed. Override with `PORT` and `API_PORT` if you move it; keep
+> the two in step. Docker is unaffected: nginx talks to `model:5000` on the
+> container network, where nothing else is listening.
 
 Matching needs the corpus before it will do anything locally: `ingest_dogs.py`,
 then `embed_dogs.py`, then `calibrate_humans.py` — `DATA_STORAGE.md` §5 and
