@@ -3,12 +3,16 @@
 Uploading turns each valid image into its own queued job (see queue.py for
 how jobs get picked up and processed) and hands back immediately — nothing
 here waits on the model.
+
+Bytes never land on disk as the client sent them: every accepted image is
+decoded and re-encoded by ``app/storage/imaging.py`` first, which is what
+strips EXIF/GPS, fixes sideways photos, and neutralises anything hidden in a
+metadata segment. See DATA_STORAGE.md §6.
 """
 from __future__ import annotations
 
+import asyncio
 import json
-import os
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -16,35 +20,35 @@ from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import UploadJob
+from ..storage import layout
+from ..storage.imaging import ImageRejected, decode, write_derivatives
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
-# Same volume as app/game/store.py's GAME_DATA_DIR (mounted at /app/data in
-# docker-compose.yml), just a different subfolder — no compose change needed.
-UPLOAD_DIR = Path(os.getenv("UPLOAD_DATA_DIR", "data/uploads"))
-
 MAX_FILE_BYTES = 10 * 1024 * 1024  # a phone photo fits well inside this
+# A single request can't be used to fill the disk in one shot. Batches larger
+# than this are a queue-fairness problem anyway (see queue.py).
+MAX_FILES_PER_REQUEST = 20
 MAX_OWNER_ID = 64
 
 # The client's declared Content-Type is just a hint — sniff the real format
 # from the file's own magic bytes so a renamed .exe can't sneak through.
-_MAGIC: tuple[tuple[bytes, str, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
-    (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
+_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
 )
-_EXT_BY_CONTENT_TYPE = {content_type: ext for _, content_type, ext in _MAGIC}
+
+# Which stored derivative each ?size= maps to. "orig" is deliberately absent:
+# it is the model's input, and there is no reason to serve a browser 1024px of
+# somebody's face when 512 is the largest the UI ever renders.
+_SERVABLE = {"display": "image/webp", "thumb": "image/webp"}
 
 
 def _sniff(data: bytes) -> str | None:
-    for magic, content_type, _ in _MAGIC:
+    for magic, content_type in _MAGIC:
         if data.startswith(magic):
             return content_type
     return None
-
-
-def _file_path(job: UploadJob) -> Path:
-    ext = _EXT_BY_CONTENT_TYPE.get(job.content_type, "")
-    return UPLOAD_DIR / f"{job.id}{ext}"
 
 
 def _clean_owner_id(owner_id: str) -> str:
@@ -69,6 +73,10 @@ async def upload_images(
         raise HTTPException(422, "ownerId is required")
     if not files:
         raise HTTPException(422, "no files were uploaded")
+    if len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(
+            422, f"too many files at once — send at most {MAX_FILES_PER_REQUEST} per upload"
+        )
 
     try:
         urgent_flags = json.loads(urgent)
@@ -96,6 +104,19 @@ async def upload_images(
             )
             continue
 
+        # Decode before creating the row, so a bomb or a corrupt file leaves no
+        # orphan job behind. `ImageRejected` carries a user-safe message.
+        #
+        # Off the event loop: Pillow is synchronous CPU work, and this handler
+        # is async. A 20-file batch would otherwise block the loop for seconds
+        # — no WebSocket frames delivered, no progress from the queue workers,
+        # every other request stalled behind it.
+        try:
+            image = await asyncio.to_thread(decode, data)
+        except ImageRejected as exc:
+            rejected.append({"filename": display_name, "reason": str(exc)})
+            continue
+
         job = UploadJob(
             owner_id=owner_id,
             original_filename=display_name[:255],
@@ -107,8 +128,33 @@ async def upload_images(
         db.commit()
         db.refresh(job)
 
-        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        _file_path(job).write_bytes(data)
+        # The id is the filename, so the derivatives can only be written once
+        # the row exists. If that write fails the row would point at nothing —
+        # so drop it and report the file as rejected rather than queue a job
+        # the worker is certain to fail on.
+        try:
+            layout.ensure_upload_dirs(job.id)
+            targets = {
+                layout.upload_path(job.id, size): spec
+                for size, spec in layout.UPLOAD_SIZES.items()
+            }
+            stored = await asyncio.to_thread(write_derivatives, data, targets, image)
+        except (ImageRejected, OSError) as exc:
+            layout.delete_upload_files(job.id)
+            db.delete(job)
+            db.commit()
+            rejected.append({"filename": display_name, "reason": f"could not be stored: {exc}"})
+            continue
+
+        # Measured after re-encoding, not taken from the multipart headers:
+        # byte_size is the queue's shortest-job-first proxy, so it has to
+        # describe the file the worker will actually read.
+        job.checksum = stored.checksum
+        job.byte_size = stored.byte_size
+        job.width = stored.width
+        job.height = stored.height
+        db.commit()
+        db.refresh(job)
 
         created.append(job.as_dict())
 
@@ -127,12 +173,48 @@ def list_uploads(ownerId: str, db: Session = Depends(get_db)):
     return [r.as_dict() for r in rows]
 
 
-@router.get("/{job_id}/image")
-def upload_image(job_id: int, ownerId: str, db: Session = Depends(get_db)):
+@router.get("/{job_id}")
+def get_upload(job_id: int, ownerId: str, db: Session = Depends(get_db)):
+    """One job, for the result page.
+
+    Same ownership rule as the image endpoint, and the same deliberate
+    conflation of "not yours" with "doesn't exist": a 403 would confirm the id
+    is real, letting someone probe for other people's uploads.
+    """
     job = db.get(UploadJob, job_id)
     if job is None or job.owner_id != _clean_owner_id(ownerId):
         raise HTTPException(404, "No such upload.")
-    path = _file_path(job)
+    return job.as_dict()
+
+
+@router.get("/{job_id}/image")
+def upload_image(job_id: int, ownerId: str, size: str = "display", db: Session = Depends(get_db)):
+    """Serve one of an owner's uploaded photos.
+
+    Unlike dog photos — which nginx serves straight off a read-only mount —
+    user photos are personal data, so every read goes through this ownership
+    check and is marked no-store. That is slower, and it is the right
+    trade-off (DATA_STORAGE.md §2.2).
+    """
+    if size not in _SERVABLE:
+        raise HTTPException(422, f"unknown size {size!r}; expected one of {sorted(_SERVABLE)}")
+
+    job = db.get(UploadJob, job_id)
+    if job is None or job.owner_id != _clean_owner_id(ownerId):
+        raise HTTPException(404, "No such upload.")
+
+    path = layout.upload_path(job_id, size)
+    media_type = _SERVABLE[size]
     if not path.exists():
-        raise HTTPException(404, "Image file is missing.")
-    return FileResponse(path, media_type=job.content_type)
+        # Volumes seeded by the build before derivatives existed still have the
+        # original at the old flat path. Serve it rather than 404 after a deploy.
+        legacy = layout.legacy_upload_path(job_id, job.content_type)
+        if not legacy.exists():
+            raise HTTPException(404, "Image file is missing.")
+        path, media_type = legacy, job.content_type
+
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers={"Cache-Control": "private, no-store"},
+    )

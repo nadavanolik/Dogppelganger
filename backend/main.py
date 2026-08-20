@@ -1,7 +1,7 @@
 """FastAPI entry point.
 
-Local dev:   python main.py            (http://localhost:5000, auto-reload)
-             or: uvicorn main:app --reload --port 5000
+Local dev:   python main.py            (http://localhost:5001, auto-reload)
+             or: uvicorn main:app --reload --port 5001
 Production:  uvicorn main:app --host 0.0.0.0 --port 5000   (see Dockerfile)
 
 Interactive API docs are auto-generated at /docs.
@@ -10,13 +10,15 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import Base, engine
 from app import models  # noqa: F401  (import so tables register on Base)
 from app.forum import router as forum_router
 from app.forum.seed import seed_if_empty
 from app.game import router as game_router
-from app.routers import auth, views, ws
+from app.routers import auth, dogs, views, ws
+from app.storage import layout
 from app.uploads import router as uploads_router
 from app.uploads import queue as upload_queue
 from app.uploads.ws import notifier as upload_notifier
@@ -61,9 +63,24 @@ app.include_router(ws.router)
 app.include_router(game_router)
 app.include_router(uploads_router)
 app.include_router(forum_router)
+app.include_router(dogs.router)
+
+# Dog photos in local development only. In production nginx owns /dogs/ and
+# serves it off the read-only `dogdata` mount — requests never reach here (it
+# only forwards /api/*). This mount exists so `npm run dev` + `python main.py`
+# shows real dogs without anyone having to run nginx. Skipped when the corpus
+# hasn't been ingested, because StaticFiles refuses to start on a missing dir.
+if layout.dog_root().is_dir():
+    app.mount("/dogs", StaticFiles(directory=layout.dog_root()), name="dogs")
 
 
 if __name__ == "__main__":
+    import os
+
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=5000, reload=True)
+    # Configurable because macOS has claimed 5000 since Monterey: AirPlay
+    # Receiver (ControlCenter/AirTunes) listens there and answers 403, which
+    # looks exactly like a broken backend. Set PORT here and API_PORT for the
+    # Vite dev proxy to the same value.
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", "5001")), reload=True)

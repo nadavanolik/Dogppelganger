@@ -120,6 +120,75 @@ Quick checks:
 curl http://<SSH_HOST>/api/health      # -> {"status":"ok"}
 ```
 
+### Database schema
+
+The deploy workflow now runs `scripts/migrate_schema.py` on the VM before
+starting the new containers. You don't need to do anything — it's idempotent
+and prints `nothing to do` once applied.
+
+It's there because `create_all()` only ever creates *missing tables*: it never
+adds a column to a table that already exists, and `dbdata` is a named volume
+that survives every deploy. Without it, a VM running the old schema would 500
+on every upload, forum and match request at once. To inspect the plan by hand:
+
+```bash
+cd ~/dogppelganger && docker compose run --rm model python scripts/migrate_schema.py --dry-run
+```
+
+### Seed the dog corpus (once, after the first deploy)
+
+Matching has nothing to match against until the AFHQ dog photos are on the
+`dogdata` volume, and every dog image on the site 404s. This is a **one-time**
+step — the volume is named, so deploys never touch it.
+
+Copy the extracted dog folder up, then run the ingest inside the backend
+container:
+
+```bash
+scp -r ~/Downloads/afhq <SSH_USER>@<SSH_HOST>:~/afhq
+```
+
+```bash
+cd ~/dogppelganger && docker compose run --rm -v ~/afhq:/seed:ro model python scripts/ingest_dogs.py --source /seed
+```
+
+It takes a few minutes for 5,239 images and is safe to interrupt and re-run.
+
+### Embed the corpus and calibrate (once, straight after seeding)
+
+Matching needs vectors, not just pixels. Both passes use the ONNX encoder that
+is already baked into the image, so neither needs PyTorch on the VM.
+
+```bash
+cd ~/dogppelganger && docker compose run --rm model python scripts/embed_dogs.py
+```
+
+Then the human reference statistics — any folder of face photos works; LFW is
+a convenient, freely available one. The images are read and discarded, and only
+aggregate statistics are stored:
+
+```bash
+curl -L -o lfw.tgz https://ndownloader.figshare.com/files/5976018 && tar xzf lfw.tgz
+```
+
+> That figshare address is a mirror of Labeled Faces in the Wild. The original UMass
+> host (`vis-www.cs.umass.edu`) no longer resolves. Any folder of face photos
+> works — LFW is only a convenient, freely available default.
+
+```bash
+cd ~/dogppelganger && docker compose run --rm -v ~/lfw:/faces:ro model python scripts/calibrate_humans.py --source /faces
+```
+
+Confirm the whole thing worked:
+
+```bash
+curl http://<SSH_HOST>/api/dogs/stats     # -> {"total":5239,"embedded":5239,...}
+```
+
+`total: 0` means the corpus is still empty; `embedded: 0` means it has pixels
+but no vectors and every match will fail with a message saying so. See
+`DATA_STORAGE.md` §5 and §7 for the full contracts.
+
 On the VM you can inspect things with:
 
 ```bash
@@ -143,22 +212,36 @@ docker compose up --build
 **Frontend and backend separately (fastest for development):**
 
 ```bash
-# terminal 1 — FastAPI on :5000 (uses a local SQLite file, no Postgres needed)
+# terminal 1 — FastAPI on :5001 (uses a local SQLite file, no Postgres needed)
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 
-# terminal 2 — React dev server on :5173 (proxies /api to :5000)
+# terminal 2 — React dev server on :5173 (proxies /api to :5001)
 npm install
 npm run dev
 ```
+
+> **Why 5001 and not 5000.** On macOS, AirPlay Receiver (ControlCenter) has
+> listened on 5000 since Monterey and answers every request with `403` — which
+> surfaces in the browser as "Request failed (403)" on upload and looks exactly
+> like a broken backend. Both dev defaults are therefore 5001 and no environment
+> variables are needed. Override with `PORT` and `API_PORT` if you move it; keep
+> the two in step. Docker is unaffected: nginx talks to `model:5000` on the
+> container network, where nothing else is listening.
+
+Matching needs the corpus before it will do anything locally: `ingest_dogs.py`,
+then `embed_dogs.py`, then `calibrate_humans.py` — `DATA_STORAGE.md` §5 and
+§7.4. `curl localhost:5001/api/dogs/stats` tells you where you are.
 
 ---
 
 ## Notes / future work
 
-- `backend/app/model.py` is a **placeholder** matcher. Swap `predict_breed`
-  for the real ML model — the API contract in `views.py` won't change.
+- Matching is CLIP retrieval with species-mean centring and a shared text
+  attribute space (`backend/app/ml`, `DATA_STORAGE.md` §7). PyTorch is not in
+  the runtime image: the encoder is exported to ONNX in a discarded Docker
+  build stage, so the container carries the model without the framework.
 - HTTPS: put a real domain + TLS (e.g. Caddy or nginx + certbot) in front later.
   For now the site is served over plain HTTP on port 80.

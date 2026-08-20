@@ -94,11 +94,13 @@ function Inner() {
                   className={`card-pop-sm p-2 text-left ${selected === job.id ? "ring-4 ring-[var(--primary)]" : ""}`}
                 >
                   <img
-                    src={uploadImageUrl(owner.id, job.id)}
+                    src={uploadImageUrl(owner.id, job.id, "thumb")}
                     className="w-full aspect-square object-cover rounded-lg border-2 border-[var(--ink)]"
-                    alt={job.breedName ?? job.filename}
+                    alt={job.filename}
                   />
-                  <div className="mt-1 text-xs font-bold truncate">{job.breedName}</div>
+                  <div className="mt-1 text-xs font-bold truncate">
+                    {job.score != null ? `${Math.round(job.score * 100)}% match` : job.filename}
+                  </div>
                 </button>
               ))}
             </div>

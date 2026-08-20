@@ -1,4 +1,5 @@
 import dogImages from "./dogImages.json";
+import { dogSrc } from "./dogSrc";
 
 export const BREEDS = [
   {
@@ -50,7 +51,9 @@ export function randomBreed(seed?: string): Breed {
     h = Math.floor(Math.random() * 1000000);
   }
   const base = BREEDS[h % BREEDS.length];
-  const image = dogImages.length > 0 ? `/dogs/${dogImages[h % dogImages.length]}` : undefined;
+  // dogImages.json holds slugs, not filenames — dogSrc turns one into a URL
+  // for the right derivative. See src/lib/dogSrc.ts.
+  const image = dogImages.length > 0 ? dogSrc(h) : undefined;
   return { ...base, image };
 }
 
@@ -58,7 +61,7 @@ export const SAMPLE_HUMANS = ["😀", "🧑", "👩", "🧔", "👨‍🦰", "�
 
 export const SAMPLE_POSTS = [
   {
-    title: "I got matched with a Shiba Inu and my life makes sense now",
+    title: "I got matched with a very smug terrier and my life makes sense now",
     body: "For 32 years I thought I was a Golden. Turns out I've been misreading myself. The polite chaos hits.",
     author: "moodyoak",
   },

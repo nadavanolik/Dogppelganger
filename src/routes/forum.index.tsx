@@ -4,6 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { useStore } from "@/lib/store";
 import { forumApi, type ForumPost } from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
+import { MatchPair } from "@/components/MatchPair";
 
 export default ForumList;
 
@@ -64,16 +65,13 @@ function ForumList() {
               {p.body}
             </Link>
             {p.image && (
-              <div className="mt-3 flex items-center gap-3">
-                <img
-                  src={uploadImageUrl(p.authorId, p.image.jobId)}
-                  className="h-24 w-24 object-cover rounded-xl border-2 border-[var(--ink)]"
-                  alt={p.image.breedName ?? ""}
+              <div className="mt-3">
+                <MatchPair
+                  humanSrc={uploadImageUrl(p.authorId, p.image.jobId)}
+                  dog={p.image.dog}
+                  score={p.image.score}
+                  sharedTraits={p.image.sharedTraits}
                 />
-                <div>
-                  <div className="font-display text-lg font-bold">{p.image.breedName}</div>
-                  <div className="text-xs text-muted-foreground italic">{p.image.trait}</div>
-                </div>
               </div>
             )}
             <div className="mt-3 flex items-center gap-2">

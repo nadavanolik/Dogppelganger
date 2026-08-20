@@ -1,0 +1,12 @@
+# Offline-only ML dependencies — NOT installed into the Docker image.
+#
+# These run on a developer machine for the one-time passes that fill the
+# database: embedding the dog corpus, calibrating against human faces, and
+# exporting the CLIP image encoder to ONNX. The deployed container needs none
+# of it: at request time we run the exported encoder under onnxruntime, which
+# is ~15MB instead of PyTorch's ~2GB. See DATA_STORAGE.md 7.
+#
+#   pip install -r requirements-ml.txt
+torch==2.6.0
+transformers==4.48.0
+onnx==1.18.0

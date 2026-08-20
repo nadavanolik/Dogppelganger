@@ -43,6 +43,12 @@ jobs:
           context: ./backend
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/dogppelganger-model:latest
+          # The first build stage installs PyTorch and exports CLIP to ONNX,
+          # which takes minutes. Caching it in GitHub Actions means that layer
+          # is reused on every later deploy and only rebuilt when
+          # requirements-ml.txt actually changes.
+          cache-from: type=gha,scope=model
+          cache-to: type=gha,scope=model,mode=max
 
   deploy:
     name: Deploy to VM over SSH
@@ -60,5 +66,12 @@ jobs:
             cd ~/dogppelganger
             git pull --ff-only
             docker compose pull
+            # Schema before code. main.py's create_all() builds missing tables
+            # but never adds a column to one that already exists, and the
+            # Postgres data directory is a named volume that survives every
+            # deploy — so without this the new image queries columns the live
+            # database hasn't got. The script is idempotent: once applied it
+            # prints "nothing to do" and exits 0.
+            docker compose run --rm model python scripts/migrate_schema.py
             docker compose up -d
             docker image prune -f

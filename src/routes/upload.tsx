@@ -1,9 +1,10 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, RequireAuth } from "@/components/AppShell";
+import { SharedTraits } from "@/components/MatchPair";
 import { useStore } from "@/lib/store";
-import { uploadApi, uploadImageUrl, type Rejected, type UploadJob } from "@/lib/uploadApi";
-import { useUploadNotifications } from "@/lib/uploadSocket";
+import { uploadApi, type Rejected } from "@/lib/uploadApi";
+import { useUploadFeed } from "@/lib/uploadFeed";
 
 export default UploadPage;
 
@@ -17,8 +18,6 @@ function UploadPage() {
   );
 }
 
-const HUMANS = ["🧑", "👩", "🧔", "👨‍🦰", "👩‍🦱", "🧑‍🎤", "👵", "🧑‍🚀", "🧑‍🌾"];
-
 // The browser's <input accept> is only a filter suggestion — a user can still
 // pick "All files", so this is checked again for real (bytes, not just this
 // header) on the server before anything is queued.
@@ -27,7 +26,7 @@ const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg"]);
 type PendingImage = { file: File; src: string; urgent: boolean };
 
 function Upload() {
-  const { state, submitMatch } = useStore();
+  const { state } = useStore();
   const navigate = useNavigate();
   const owner = state.user ?? state.users[0];
   const [mode, setMode] = useState<"single" | "multi">("single");
@@ -35,34 +34,10 @@ function Upload() {
   const single = useRef<HTMLInputElement>(null);
 
   // --------------------------------------------------------- multi / queue
+  const { add: addToFeed } = useUploadFeed();
   const [pending, setPending] = useState<PendingImage[]>([]);
   const [rejected, setRejected] = useState<Rejected[]>([]);
-  const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    uploadApi
-      .list(owner.id)
-      .then((rows) => {
-        if (!cancelled) setJobs(rows);
-      })
-      .catch((err) => {
-        if (!cancelled)
-          setLoadError(err instanceof Error ? err.message : "Couldn't load your queue.");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [owner.id]);
-
-  useUploadNotifications(owner.id, (job) => {
-    setJobs((prev) => {
-      const exists = prev.some((j) => j.id === job.id);
-      return exists ? prev.map((j) => (j.id === job.id ? job : j)) : [job, ...prev];
-    });
-  });
 
   async function readFile(f: File) {
     return new Promise<string>((res) => {
@@ -72,11 +47,30 @@ function Upload() {
     });
   }
 
+  // Single upload goes through the same API and the same queue as a batch —
+  // it just happens to be a batch of one, and lands on the result page rather
+  // than the queue grid. It used to call the localStorage mock instead, which
+  // is how a real photo ended up captioned with an invented breed.
   async function onSingle(files: FileList | null) {
     if (!files || !files[0]) return;
-    const src = await readFile(files[0]);
-    const m = submitMatch(src, urgent);
-    navigate(`/result/${m.id}`);
+    setSubmitting(true);
+    try {
+      const res = await uploadApi.upload(owner.id, [{ file: files[0], urgent }]);
+      const created = res.created[0];
+      if (!created) {
+        setRejected((r) => [...res.rejected, ...r]);
+        return;
+      }
+      addToFeed(res.created);
+      navigate(`/result/${created.id}`);
+    } catch (err) {
+      setRejected((r) => [
+        { filename: files[0].name, reason: err instanceof Error ? err.message : "Upload failed." },
+        ...r,
+      ]);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function onMulti(files: FileList | null) {
@@ -97,11 +91,6 @@ function Upload() {
     if (badFiles.length > 0) setRejected((r) => [...badFiles, ...r]);
   }
 
-  function pickEmoji(e: string) {
-    const m = submitMatch(e, urgent);
-    navigate(`/result/${m.id}`);
-  }
-
   async function submitQueue() {
     if (pending.length === 0 || submitting) return;
     setSubmitting(true);
@@ -110,9 +99,13 @@ function Upload() {
         owner.id,
         pending.map((p) => ({ file: p.file, urgent: p.urgent })),
       );
-      setJobs((prev) => [...res.created, ...prev]);
+      addToFeed(res.created);
       if (res.rejected.length > 0) setRejected((r) => [...res.rejected, ...r]);
       setPending([]);
+      // Both modes now hand off to a page that shows progress rather than
+      // leaving the user on the form. A single photo has its own result page;
+      // a batch goes to My dogs, where each card resolves in place.
+      if (res.created.length > 0) navigate("/profile");
     } catch (err) {
       setRejected((r) => [
         { filename: "", reason: err instanceof Error ? err.message : "Upload failed." },
@@ -141,6 +134,11 @@ function Upload() {
           </TabBtn>
         </div>
 
+        <Rejections
+          items={rejected}
+          onDismiss={(i) => setRejected((r) => r.filter((_, j) => j !== i))}
+        />
+
         {mode === "single" ? (
           <div className="mt-6">
             <label className="flex items-center gap-2 mb-4">
@@ -157,7 +155,9 @@ function Upload() {
               className="cursor-pointer border-4 border-dashed border-[var(--ink)] rounded-3xl p-10 text-center bg-sunshine/40 hover:bg-sunshine transition"
             >
               <div className="text-6xl">📸</div>
-              <div className="mt-2 font-display text-2xl font-bold">Drop a face here</div>
+              <div className="mt-2 font-display text-2xl font-bold">
+                {submitting ? "Sending…" : "Drop a face here"}
+              </div>
               <div className="text-muted-foreground">or click to upload a png/jpg</div>
               <input
                 ref={single}
@@ -166,22 +166,6 @@ function Upload() {
                 className="hidden"
                 onChange={(e) => onSingle(e.target.files)}
               />
-            </div>
-            <div className="mt-6">
-              <div className="text-sm font-bold text-muted-foreground mb-2">
-                No selfie handy? Pick a face:
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {HUMANS.map((e) => (
-                  <button
-                    key={e}
-                    onClick={() => pickEmoji(e)}
-                    className="h-14 w-14 rounded-2xl border-2 border-[var(--ink)] bg-card text-3xl hover:bg-mint shadow-pop-sm"
-                  >
-                    {e}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         ) : (
@@ -203,28 +187,6 @@ function Upload() {
                 }}
               />
             </label>
-
-            {rejected.length > 0 && (
-              <div className="mt-4 space-y-1">
-                {rejected.map((r, i) => (
-                  <div
-                    key={i}
-                    className="p-2 rounded-xl bg-destructive/10 border-2 border-destructive text-destructive text-sm flex justify-between gap-2"
-                  >
-                    <span>
-                      {r.filename ? <b>{r.filename}</b> : null} {r.reason}
-                    </span>
-                    <button
-                      onClick={() => setRejected((r2) => r2.filter((_, j) => j !== i))}
-                      className="font-bold shrink-0"
-                      aria-label="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {pending.length > 0 && (
               <div className="mt-5">
@@ -272,8 +234,6 @@ function Upload() {
                 </button>
               </div>
             )}
-
-            <UploadQueue ownerId={owner.id} jobs={jobs} loadError={loadError} />
           </div>
         )}
       </div>
@@ -287,7 +247,7 @@ function Upload() {
           </li>
           <li className="flex gap-2">
             <span>2️⃣</span>
-            <span>Our very serious dogify engine assigns a breed.</span>
+            <span>Our very serious dogify engine finds your closest dog.</span>
           </li>
           <li className="flex gap-2">
             <span>3️⃣</span>
@@ -308,73 +268,29 @@ function Upload() {
   );
 }
 
-const STATUS_LABEL: Record<UploadJob["status"], string> = {
-  queued: "⏳ queued",
-  processing: "🐾 processing",
-  done: "✅ done",
-  error: "⚠️ error",
-};
-
-const STATUS_CLASS: Record<UploadJob["status"], string> = {
-  queued: "bg-sky text-sky-foreground",
-  processing: "bg-sunshine text-sunshine-foreground animate-pulse",
-  done: "bg-mint text-mint-foreground",
-  error: "bg-destructive text-destructive-foreground",
-};
-
-function UploadQueue({
-  ownerId,
-  jobs,
-  loadError,
+function Rejections({
+  items,
+  onDismiss,
 }: {
-  ownerId: string;
-  jobs: UploadJob[];
-  loadError: string | null;
+  items: Rejected[];
+  onDismiss: (index: number) => void;
 }) {
-  if (loadError) {
-    return <div className="mt-6 text-sm text-destructive">{loadError}</div>;
-  }
-  if (jobs.length === 0) return null;
-
+  if (items.length === 0) return null;
   return (
-    <div className="mt-8">
-      <div className="font-display text-xl font-bold mb-3">Your queue</div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        {jobs.map((job) => (
-          <div key={job.id} className="card-pop-sm p-2">
-            <div className="relative">
-              <img
-                src={uploadImageUrl(ownerId, job.id)}
-                className="w-full aspect-square object-cover rounded-lg border-2 border-[var(--ink)]"
-                alt={job.filename}
-              />
-              {job.urgent && (
-                <span className="absolute top-1 left-1 text-lg" title="Urgent">
-                  🚨
-                </span>
-              )}
-            </div>
-            <div className="mt-2 flex items-center justify-between gap-1">
-              <span className="text-xs font-bold truncate" title={job.filename}>
-                {job.filename}
-              </span>
-              <span
-                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border border-[var(--ink)] shrink-0 ${STATUS_CLASS[job.status]}`}
-              >
-                {STATUS_LABEL[job.status]}
-              </span>
-            </div>
-            {job.status === "done" && (
-              <div className="mt-1 text-xs text-muted-foreground">
-                {job.breedName} — {job.trait}
-              </div>
-            )}
-            {job.status === "error" && job.error && (
-              <div className="mt-1 text-xs text-destructive">{job.error}</div>
-            )}
-          </div>
-        ))}
-      </div>
+    <div className="mt-4 space-y-1">
+      {items.map((r, i) => (
+        <div
+          key={i}
+          className="p-2 rounded-xl bg-destructive/10 border-2 border-destructive text-destructive text-sm flex justify-between gap-2"
+        >
+          <span>
+            {r.filename ? <b>{r.filename}</b> : null} {r.reason}
+          </span>
+          <button onClick={() => onDismiss(i)} className="font-bold shrink-0" aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

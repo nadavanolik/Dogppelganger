@@ -7,3 +7,15 @@ PyJWT==2.10.1
 bcrypt==4.2.1
 python-dotenv==1.0.1
 python-multipart==0.0.20
+# Image decode/resize for the storage layer (app/storage/imaging.py).
+Pillow==11.1.0
+# Embedding vectors are stored as raw float32 bytes and scanned as one matrix
+# at match time — see DATA_STORAGE.md 4.2.
+numpy==2.2.1
+# CLIP image encoder at request time. onnxruntime instead of torch keeps the
+# deployed image small enough to pull on every deploy and to fit a 1GB VM;
+# the torch side is offline-only (requirements-ml.txt).
+onnxruntime==1.20.1
+# Face detection + crop, so an uploaded photo looks like AFHQ's tight face
+# crops before it is embedded. Headless: no GUI libs in the container.
+opencv-python-headless==4.11.0.86

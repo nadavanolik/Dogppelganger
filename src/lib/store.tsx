@@ -7,7 +7,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { BREEDS, randomBreed, SAMPLE_POSTS } from "./mock";
+import { SAMPLE_POSTS } from "./mock";
+import type { SharedTrait } from "./uploadApi";
 
 export type User = { id: string; username: string; email: string };
 
@@ -17,11 +18,11 @@ export type DogMatch = {
   userId: string;
   username: string;
   humanImg: string; // dataURL or emoji
-  breedName: string;
-  breedEmoji: string;
-  breedImage?: string;
-  breedBg: string;
-  trait: string;
+  // Which dog, as an index into dogImages.json (see lib/dogSrc). There is no
+  // breed name: AFHQ carries no breed labels, so the one that used to sit here
+  // was invented by `randomBreed` independently of the photo it captioned.
+  dogIndex?: number;
+  sharedTraits?: SharedTrait[];
   status: MatchStatus;
   urgent: boolean;
   shared: boolean;
@@ -89,24 +90,20 @@ function seed(): State {
     { id: "u_corgi_core", username: "corgi_core", email: "corgi@dog.dog" },
     { id: "u_hufflepupp", username: "hufflepupp", email: "huff@dog.dog" },
   ];
-  const sampleMatches: DogMatch[] = users.map((u, i) => {
-    const b = BREEDS[(i * 3) % BREEDS.length];
-    return {
-      id: "m_seed_" + i,
-      userId: u.id,
-      username: u.username,
-      humanImg: ["😀", "🧔", "👩‍🦱"][i],
-      breedName: b.name,
-      breedEmoji: b.emoji,
-      breedImage: undefined,
-      breedBg: b.bg,
-      trait: b.trait,
-      status: "done",
-      urgent: false,
-      shared: true,
-      createdAt: Date.now() - (i + 1) * 3600_000,
-    };
-  });
+  const sampleMatches: DogMatch[] = users.map((u, i) => ({
+    id: "m_seed_" + i,
+    userId: u.id,
+    username: u.username,
+    humanImg: ["😀", "🧔", "👩‍🦱"][i],
+    // Arbitrary but fixed dogs, so the cold-start gallery shows real photos
+    // from the corpus instead of empty cards. These are decoration: no real
+    // person was matched to them, so they carry no traits.
+    dogIndex: [412, 1907, 3355][i],
+    status: "done",
+    urgent: false,
+    shared: true,
+    createdAt: Date.now() - (i + 1) * 3600_000,
+  }));
   const posts: Post[] = SAMPLE_POSTS.map((p, i) => ({
     id: "p_seed_" + i,
     userId: users[i % users.length].id,
@@ -147,7 +144,6 @@ type Ctx = {
   login: (email: string, password: string) => User | null;
   logout: () => void;
   // matches
-  submitMatch: (humanImg: string, urgent: boolean) => DogMatch;
   shareMatch: (id: string) => void;
   discardMatch: (id: string) => void;
   // posts
@@ -157,6 +153,8 @@ type Ctx = {
   // dms
   openConversation: (otherUserId: string, otherUsername: string) => Conversation;
   sendMessage: (conversationId: string, body: string, media?: string) => void;
+  /** A real (server-side) match finished — ring the bell. */
+  notifyMatchReady: (jobId: number, filename: string) => void;
   // notifications
   markAllRead: () => void;
 };
@@ -206,7 +204,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                     id: uid("n"),
                     userId: target.userId,
                     kind: "match" as const,
-                    text: `Your ${target.breedName} match is ready!`,
+                    text: "Your dog match is ready!",
                     href: `/result/${target.id}`,
                     read: false,
                     at: Date.now(),
@@ -242,27 +240,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       },
       logout() {
         setState((s) => ({ ...s, user: null }));
-      },
-      submitMatch(humanImg, urgent) {
-        const u = state.user ?? state.users[0];
-        const b = randomBreed(humanImg + Date.now());
-        const m: DogMatch = {
-          id: uid("m"),
-          userId: u.id,
-          username: u.username,
-          humanImg,
-          breedName: b.name,
-          breedEmoji: b.emoji,
-          breedImage: b.image,
-          breedBg: b.bg,
-          trait: b.trait,
-          status: "queued",
-          urgent,
-          shared: false,
-          createdAt: Date.now(),
-        };
-        setState((s) => ({ ...s, matches: [m, ...s.matches] }));
-        return m;
       },
       shareMatch(id) {
         setState((s) => ({
@@ -396,6 +373,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             ],
           };
         });
+      },
+      notifyMatchReady(jobId, filename) {
+        const u = state.user;
+        if (!u) return;
+        setState((s) => ({
+          ...s,
+          notifications: [
+            {
+              id: uid("n"),
+              userId: u.id,
+              kind: "match" as const,
+              text: `Your dog for ${filename} is ready!`,
+              href: `/result/${jobId}`,
+              read: false,
+              at: Date.now(),
+            },
+            ...s.notifications,
+          ],
+        }));
       },
       markAllRead() {
         const u = state.user;

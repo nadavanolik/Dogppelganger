@@ -4,3 +4,10 @@ __pycache__/
 venv/
 *.db
 .env
+
+# Ingested dog corpus + user uploads live on Docker volumes, never in git.
+data/
+
+# The exported CLIP image encoder (~350MB). Rebuilt by
+# scripts/export_encoder.py, and by the Docker build in a discarded stage.
+app/ml/assets/clip_image_encoder.onnx

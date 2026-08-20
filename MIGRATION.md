@@ -31,13 +31,13 @@ docker compose up --build
 **Or the two halves separately while developing:**
 
 ```bash
-# Backend — FastAPI on :5000 (uses a local SQLite file, no Postgres needed)
+# Backend — FastAPI on :5001 (uses a local SQLite file, no Postgres needed)
 cd backend
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python main.py
 
-# Frontend — React dev server on :5173 (auto-proxies /api to :5000)
+# Frontend — React dev server on :5173 (auto-proxies /api to :5001)
 npm install
 npm run dev
 ```
@@ -87,7 +87,7 @@ DEPLOY.md                the deployment pipeline + VM setup steps
 
 ## The API (frontend ↔ backend contract)
 
-The React app talks to FastAPI over `/api`. In dev, Vite proxies it to `:5000`;
+The React app talks to FastAPI over `/api`. In dev, Vite proxies it to `:5001`;
 in production, nginx proxies it to the `model` container. Current endpoints:
 
 | Method | Path                | Purpose                              |

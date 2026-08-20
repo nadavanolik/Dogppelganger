@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Comment, Post, Reaction, UploadJob
+from ..models import Comment, Post, Reaction, UploadJob, shared_traits_payload
 
 router = APIRouter(prefix="/api/forum", tags=["forum"])
 
@@ -59,9 +59,10 @@ def _image_dict(job: UploadJob | None) -> dict | None:
         return None
     return {
         "jobId": job.id,
-        "breedName": job.breed_name,
-        "trait": job.trait,
-        "confidence": job.confidence,
+        "dog": job.dog.as_dict() if job.dog else None,
+        "dogIndex": job.dog.manifest_index if job.dog else None,
+        "score": job.score,
+        "sharedTraits": shared_traits_payload(job.shared_traits),
     }
 
 

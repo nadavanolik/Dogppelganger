@@ -10,3 +10,6 @@
 *.ico binary
 *.woff binary
 *.woff2 binary
+
+# Vendored ML models.
+*.onnx binary
