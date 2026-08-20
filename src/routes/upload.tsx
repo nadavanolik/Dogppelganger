@@ -26,7 +26,7 @@ const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg"]);
 type PendingImage = { file: File; src: string; urgent: boolean };
 
 function Upload() {
-  const { state, submitMatch } = useStore();
+  const { state } = useStore();
   const navigate = useNavigate();
   const owner = state.user ?? state.users[0];
   const [mode, setMode] = useState<"single" | "multi">("single");
@@ -71,11 +71,29 @@ function Upload() {
     });
   }
 
+  // Single upload goes through the same API and the same queue as a batch —
+  // it just happens to be a batch of one, and lands on the result page rather
+  // than the queue grid. It used to call the localStorage mock instead, which
+  // is how a real photo ended up captioned with an invented breed.
   async function onSingle(files: FileList | null) {
     if (!files || !files[0]) return;
-    const src = await readFile(files[0]);
-    const m = submitMatch(src, urgent);
-    navigate(`/result/${m.id}`);
+    setSubmitting(true);
+    try {
+      const res = await uploadApi.upload(owner.id, [{ file: files[0], urgent }]);
+      const created = res.created[0];
+      if (!created) {
+        setRejected((r) => [...res.rejected, ...r]);
+        return;
+      }
+      navigate(`/result/${created.id}`);
+    } catch (err) {
+      setRejected((r) => [
+        { filename: files[0].name, reason: err instanceof Error ? err.message : "Upload failed." },
+        ...r,
+      ]);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function onMulti(files: FileList | null) {
@@ -135,6 +153,11 @@ function Upload() {
           </TabBtn>
         </div>
 
+        <Rejections
+          items={rejected}
+          onDismiss={(i) => setRejected((r) => r.filter((_, j) => j !== i))}
+        />
+
         {mode === "single" ? (
           <div className="mt-6">
             <label className="flex items-center gap-2 mb-4">
@@ -151,7 +174,9 @@ function Upload() {
               className="cursor-pointer border-4 border-dashed border-[var(--ink)] rounded-3xl p-10 text-center bg-sunshine/40 hover:bg-sunshine transition"
             >
               <div className="text-6xl">📸</div>
-              <div className="mt-2 font-display text-2xl font-bold">Drop a face here</div>
+              <div className="mt-2 font-display text-2xl font-bold">
+                {submitting ? "Sending…" : "Drop a face here"}
+              </div>
               <div className="text-muted-foreground">or click to upload a png/jpg</div>
               <input
                 ref={single}
@@ -181,28 +206,6 @@ function Upload() {
                 }}
               />
             </label>
-
-            {rejected.length > 0 && (
-              <div className="mt-4 space-y-1">
-                {rejected.map((r, i) => (
-                  <div
-                    key={i}
-                    className="p-2 rounded-xl bg-destructive/10 border-2 border-destructive text-destructive text-sm flex justify-between gap-2"
-                  >
-                    <span>
-                      {r.filename ? <b>{r.filename}</b> : null} {r.reason}
-                    </span>
-                    <button
-                      onClick={() => setRejected((r2) => r2.filter((_, j) => j !== i))}
-                      className="font-bold shrink-0"
-                      aria-label="Dismiss"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
 
             {pending.length > 0 && (
               <div className="mt-5">
@@ -265,7 +268,7 @@ function Upload() {
           </li>
           <li className="flex gap-2">
             <span>2️⃣</span>
-            <span>Our very serious dogify engine assigns a breed.</span>
+            <span>Our very serious dogify engine finds your closest dog.</span>
           </li>
           <li className="flex gap-2">
             <span>3️⃣</span>
@@ -361,6 +364,33 @@ function UploadQueue({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function Rejections({
+  items,
+  onDismiss,
+}: {
+  items: Rejected[];
+  onDismiss: (index: number) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="mt-4 space-y-1">
+      {items.map((r, i) => (
+        <div
+          key={i}
+          className="p-2 rounded-xl bg-destructive/10 border-2 border-destructive text-destructive text-sm flex justify-between gap-2"
+        >
+          <span>
+            {r.filename ? <b>{r.filename}</b> : null} {r.reason}
+          </span>
+          <button onClick={() => onDismiss(i)} className="font-bold shrink-0" aria-label="Dismiss">
+            ✕
+          </button>
+        </div>
+      ))}
     </div>
   );
 }

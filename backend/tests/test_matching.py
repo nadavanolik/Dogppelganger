@@ -309,3 +309,27 @@ def test_the_manifest_endpoint_matches_the_ingest_ordering(client, dog_corpus):
 
     assert body["slugs"] == sorted(dog_corpus)
     assert body["count"] == len(dog_corpus)
+
+
+def test_one_upload_can_be_fetched_by_id(client, dog_corpus):
+    """What the result page calls."""
+    files = [("files", ("me.png", make_image(240, 240), "image/png"))]
+    created = client.post(
+        "/api/uploads", data={"ownerId": "solo", "urgent": "[false]"}, files=files
+    ).json()["created"][0]
+
+    fetched = client.get(f"/api/uploads/{created['id']}?ownerId=solo")
+
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == created["id"]
+
+
+def test_someone_elses_upload_is_a_404_not_a_403(client, dog_corpus):
+    """A 403 would confirm the id exists, which is enough to enumerate uploads."""
+    files = [("files", ("me.png", make_image(240, 240), "image/png"))]
+    created = client.post(
+        "/api/uploads", data={"ownerId": "owner", "urgent": "[false]"}, files=files
+    ).json()["created"][0]
+
+    assert client.get(f"/api/uploads/{created['id']}?ownerId=someone-else").status_code == 404
+    assert client.get("/api/uploads/999999?ownerId=owner").status_code == 404

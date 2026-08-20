@@ -1,19 +1,16 @@
-import { useMemo, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
-import { BREEDS } from "@/lib/mock";
 import { useStore } from "@/lib/store";
 
 export default Gallery;
 
 function Gallery() {
   const { state } = useStore();
-  const [breed, setBreed] = useState<string>("all");
+  // The breed filter that used to sit here filtered on `breedName`, a label
+  // invented per match and unrelated to the dog in the photo — so the chips
+  // sorted matches into categories that never meant anything. Nothing real
+  // replaces it until the corpus carries labels or the gallery is server-side.
   const all = state.matches.filter((m) => m.shared && m.status === "done");
-  const filtered = useMemo(
-    () => (breed === "all" ? all : all.filter((m) => m.breedName === breed)),
-    [all, breed],
-  );
 
   return (
     <AppShell>
@@ -24,22 +21,9 @@ function Gallery() {
             Every match shared by the pack. Feeds the multiplayer game.
           </p>
         </div>
-        <div className="flex gap-2 flex-wrap">
-          <FilterChip active={breed === "all"} onClick={() => setBreed("all")}>
-            All ({all.length})
-          </FilterChip>
-          {BREEDS.map((b) => {
-            const count = all.filter((m) => m.breedName === b.name).length;
-            if (count === 0) return null;
-            return (
-              <FilterChip key={b.name} active={breed === b.name} onClick={() => setBreed(b.name)}>
-                {b.emoji} {b.name}
-              </FilterChip>
-            );
-          })}
-        </div>
+        <span className="btn-pop bg-card px-4 py-2 text-sm font-bold">{all.length} shared</span>
       </div>
-      {filtered.length === 0 ? (
+      {all.length === 0 ? (
         <div className="card-pop p-10 text-center mt-8">
           <div className="text-6xl">🦴</div>
           <div className="font-display text-2xl font-bold mt-2">No shared matches yet</div>
@@ -47,23 +31,11 @@ function Gallery() {
         </div>
       ) : (
         <div className="mt-6 grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {filtered.map((m) => (
+          {all.map((m) => (
             <DogCard key={m.id} match={m} />
           ))}
         </div>
       )}
     </AppShell>
-  );
-}
-
-function FilterChip({
-  active,
-  ...p
-}: { active: boolean } & React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return (
-    <button
-      {...p}
-      className={`btn-pop btn-pop-hover px-3 py-1.5 text-sm ${active ? "bg-primary text-primary-foreground" : "bg-card"}`}
-    />
   );
 }

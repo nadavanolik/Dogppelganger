@@ -1,9 +1,15 @@
 import { Link } from "react-router-dom";
 import { AppShell } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
+import { dogSrc } from "@/lib/dogSrc";
 import { useStore } from "@/lib/store";
 
 export default Index;
+
+// A fixed dog for the hero card. The example used to be captioned "Golden
+// Retriever — sunny optimist" over a generic emoji; there is no breed model
+// behind the site, so the landing page shouldn't promise one.
+const EXAMPLE_DOG = 1288;
 
 function Index() {
   const { state } = useStore();
@@ -28,8 +34,8 @@ function PublicLanding() {
             you actually are.
           </h1>
           <p className="mt-5 text-lg text-muted-foreground max-w-lg">
-            Upload a selfie. Get your breed. Share it to the gallery, argue about it in the forum,
-            DM your accidental Shiba twin, and play match games with the whole pack.
+            Upload a selfie. Meet your dog. Share it to the gallery, argue about it in the forum, DM
+            your accidental terrier twin, and play match games with the whole pack.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Link
@@ -64,12 +70,14 @@ function PublicLanding() {
                 🧑
               </div>
               <div className="text-4xl">→</div>
-              <div className="h-32 w-32 rounded-2xl border-2 border-[var(--ink)] bg-gradient-to-br from-amber-200 to-orange-300 flex items-center justify-center text-6xl">
-                🐕
-              </div>
+              <img
+                src={dogSrc(EXAMPLE_DOG, "256")}
+                alt="an example matched dog"
+                className="h-32 w-32 rounded-2xl border-2 border-[var(--ink)] object-cover"
+              />
             </div>
-            <div className="mt-4 font-display text-2xl font-bold">Golden Retriever</div>
-            <div className="text-muted-foreground italic">sunny optimist</div>
+            <div className="mt-4 text-xs font-bold text-muted-foreground">you both read as</div>
+            <div className="text-sm">fluffy · goofy grin · golden colouring</div>
           </div>
           <div className="absolute -bottom-6 -left-6 card-pop-sm rotate-[-4deg] p-3 bg-bubblegum">
             <span className="text-sm font-bold">92% match ✨</span>
@@ -253,20 +261,19 @@ function SignedInHome() {
               {galleryStrip.map((m) => (
                 <div
                   key={m.id}
-                  className={`aspect-square rounded-xl border-2 border-[var(--ink)] bg-gradient-to-br ${m.breedBg} flex flex-col items-center justify-center text-center p-1 relative overflow-hidden`}
+                  className="aspect-square rounded-xl border-2 border-[var(--ink)] bg-muted flex items-center justify-center overflow-hidden"
                 >
-                  {m.breedImage ? (
+                  {m.dogIndex != null ? (
                     <img
-                      src={m.breedImage}
-                      alt={m.breedName}
-                      className="absolute inset-0 w-full h-full object-cover"
+                      src={dogSrc(m.dogIndex, "256")}
+                      alt="a shared match"
+                      className="w-full h-full object-cover"
                     />
                   ) : (
-                    <span className="text-4xl">{m.breedEmoji}</span>
+                    <span className="text-4xl" aria-hidden="true">
+                      🐾
+                    </span>
                   )}
-                  <span className="text-[10px] font-bold mt-1 truncate w-full z-10 bg-card/80 rounded px-1">
-                    {m.breedName}
-                  </span>
                 </div>
               ))}
             </div>

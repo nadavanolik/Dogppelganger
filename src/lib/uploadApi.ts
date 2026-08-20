@@ -108,6 +108,17 @@ export const uploadApi = {
     return handle<UploadResponse>(res);
   },
 
+  /** One job — what the result page polls/subscribes for. */
+  async get(ownerId: string, jobId: number): Promise<UploadJob> {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE}/${jobId}?ownerId=${encodeURIComponent(ownerId)}`);
+    } catch {
+      throw new UploadApiError("Can't reach the server. Is the backend running?");
+    }
+    return handle<UploadJob>(res);
+  },
+
   async list(ownerId: string): Promise<UploadJob[]> {
     let res: Response;
     try {

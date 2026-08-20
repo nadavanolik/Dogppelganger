@@ -173,6 +173,20 @@ def list_uploads(ownerId: str, db: Session = Depends(get_db)):
     return [r.as_dict() for r in rows]
 
 
+@router.get("/{job_id}")
+def get_upload(job_id: int, ownerId: str, db: Session = Depends(get_db)):
+    """One job, for the result page.
+
+    Same ownership rule as the image endpoint, and the same deliberate
+    conflation of "not yours" with "doesn't exist": a 403 would confirm the id
+    is real, letting someone probe for other people's uploads.
+    """
+    job = db.get(UploadJob, job_id)
+    if job is None or job.owner_id != _clean_owner_id(ownerId):
+        raise HTTPException(404, "No such upload.")
+    return job.as_dict()
+
+
 @router.get("/{job_id}/image")
 def upload_image(job_id: int, ownerId: str, size: str = "display", db: Session = Depends(get_db)):
     """Serve one of an owner's uploaded photos.

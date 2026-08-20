@@ -61,7 +61,7 @@ export const SAMPLE_HUMANS = ["😀", "🧑", "👩", "🧔", "👨‍🦰", "�
 
 export const SAMPLE_POSTS = [
   {
-    title: "I got matched with a Shiba Inu and my life makes sense now",
+    title: "I got matched with a very smug terrier and my life makes sense now",
     body: "For 32 years I thought I was a Golden. Turns out I've been misreading myself. The polite chaos hits.",
     author: "moodyoak",
   },
