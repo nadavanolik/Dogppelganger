@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
-import { AppShell, RequireAuth } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { DogOption, QuestionPrompt } from "@/components/game/DogOption";
 import { HumanFace } from "@/components/game/HumanFace";
 import { Leaderboard } from "@/components/game/Leaderboard";
@@ -10,7 +10,7 @@ import { Podium, Scoreboard } from "@/components/game/Scoreboard";
 import { TimerBar } from "@/components/game/TimerBar";
 import type { GameType } from "@/lib/gameApi";
 import { useGameRoom } from "@/lib/gameSocket";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 import { useSecondsLeft } from "@/lib/useCountdown";
 
 export default Room;
@@ -29,22 +29,18 @@ const GAME_LABEL: Record<GameType, string> = {
 function Room() {
   return (
     <AppShell>
-      <RequireAuth>
-        <Inner />
-      </RequireAuth>
+      <Inner />
     </AppShell>
   );
 }
 
 function Inner() {
   const { id } = useParams();
-  const { state: store } = useStore();
-  const me = store.user!;
+  const { user } = useAuth();
+  const me = user!;
   const navigate = useNavigate();
 
   const { status, state, lastEvent, notice, clearNotice, serverNow, send } = useGameRoom({
-    playerId: me.id,
-    playerName: me.username,
     roomId: id,
   });
 
@@ -136,8 +132,8 @@ function Inner() {
     navigate("/lobbies");
   };
 
-  const isHost = state?.hostId === me.id;
-  const meRow = state?.players.find((p) => p.playerId === me.id);
+  const isHost = state?.hostId === String(me.id);
+  const meRow = state?.players.find((p) => p.playerId === String(me.id));
   const submitted = state?.players.filter((p) => p.submitted).length ?? 0;
   const countdown = useSecondsLeft(
     phase === "countdown" ? (state?.endsAt ?? null) : null,
@@ -288,7 +284,7 @@ function Inner() {
               <MatchBoard
                 board={board}
                 claims={state.claims}
-                meId={me.id}
+                meId={String(me.id)}
                 answer={state.boardAnswer}
                 pending={pending}
                 disabled={phase === "reveal" || !!meRow?.submitted}
@@ -375,7 +371,7 @@ function Inner() {
 
         {phase === "over" && (
           <div className="card-pop p-8">
-            <Podium players={state.players} meId={me.id} />
+            <Podium players={state.players} meId={String(me.id)} />
             <div className="mt-8 flex gap-3 justify-center flex-wrap">
               {isHost ? (
                 <button
@@ -403,13 +399,13 @@ function Inner() {
           <Leaderboard
             entries={state.leaderboard}
             board={isMatch ? "multiplayer_match" : "multiplayer"}
-            meId={me.id}
+            meId={String(me.id)}
             title={`🏅 Most wins — ${GAME_LABEL[state.gameType].toLowerCase()}`}
           />
         )}
       </div>
 
-      <Scoreboard players={state.players} meId={me.id} phase={state.phase} />
+      <Scoreboard players={state.players} meId={String(me.id)} phase={state.phase} />
     </div>
   );
 }

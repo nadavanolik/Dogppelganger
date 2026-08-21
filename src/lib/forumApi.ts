@@ -2,10 +2,13 @@
  * REST client for `/api/forum` — sharing a finished dog photo with a
  * caption, likes/dislikes, and comments. See backend/app/forum.
  *
- * Identity here is the same seam as gameApi/uploadApi: an id/name pair from
- * the local-only mock auth, not a real login token.
+ * Every call is authenticated by the shared helper in `api.ts` — the author
+ * of a post or a reaction is whoever holds the token, not a name in the body.
  */
+import { api } from "./api";
 import type { DogRef, SharedTrait, UploadJob } from "./uploadApi";
+
+export { ApiError } from "./api";
 
 const BASE = "/api/forum";
 
@@ -28,7 +31,7 @@ export type PostImage = {
 
 export type ForumPost = ReactionSummary & {
   id: number;
-  authorId: string;
+  authorId: number | null;
   authorName: string;
   body: string;
   image: PostImage | null;
@@ -39,7 +42,7 @@ export type ForumPost = ReactionSummary & {
 export type ForumComment = ReactionSummary & {
   id: number;
   postId: number;
-  authorId: string;
+  authorId: number | null;
   authorName: string;
   body: string;
   createdAt: string | null;
@@ -47,59 +50,28 @@ export type ForumComment = ReactionSummary & {
 
 export type PostWithComments = ForumPost & { comments: ForumComment[] };
 
-export class ForumApiError extends Error {}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const detail = body?.detail;
-    throw new ForumApiError(
-      typeof detail === "string" ? detail : `Request failed (${res.status}).`,
-    );
-  }
-  return res.json() as Promise<T>;
-}
-
-async function getJson<T>(path: string): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}${path}`);
-  } catch {
-    throw new ForumApiError("Can't reach the server. Is the backend running?");
-  }
-  return handle<T>(res);
-}
-
-async function postJson<T>(path: string, body: unknown): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    throw new ForumApiError("Can't reach the server. Is the backend running?");
-  }
-  return handle<T>(res);
-}
-
 export const forumApi = {
-  list: (viewerId: string) => getJson<ForumPost[]>(`?viewerId=${encodeURIComponent(viewerId)}`),
+  list: () => api.get<ForumPost[]>(BASE),
 
-  get: (id: number, viewerId: string) =>
-    getJson<PostWithComments>(`/${id}?viewerId=${encodeURIComponent(viewerId)}`),
+  get: (id: number) => api.get<PostWithComments>(`${BASE}/${id}`),
 
-  create: (authorId: string, authorName: string, body: string, imageJobId?: number | null) =>
-    postJson<ForumPost>("", { authorId, authorName, body, imageJobId: imageJobId ?? null }),
+  create: (body: string, imageJobId?: number | null) =>
+    api.post<ForumPost>(BASE, { body, imageJobId: imageJobId ?? null }),
 
-  comment: (postId: number, authorId: string, authorName: string, body: string) =>
-    postJson<ForumComment>(`/${postId}/comments`, { authorId, authorName, body }),
+  comment: (postId: number, body: string) =>
+    api.post<ForumComment>(`${BASE}/${postId}/comments`, { body }),
 
-  react: (userId: string, targetType: "post" | "comment", targetId: number, kind: ReactionKind) =>
-    postJson<ReactionSummary>("/react", { userId, targetType, targetId, kind }),
+  react: (targetType: "post" | "comment", targetId: number, kind: ReactionKind) =>
+    api.post<ReactionSummary>(`${BASE}/react`, { targetType, targetId, kind }),
 
-  /** The owner's finished dogs that aren't already backing a post. */
-  shareable: (ownerId: string) =>
-    getJson<UploadJob[]>(`/shareable?ownerId=${encodeURIComponent(ownerId)}`),
+  /** Delete your own post, with its comments and reactions. Keeps the photo. */
+  removePost: (postId: number) => api.del<void>(`${BASE}/${postId}`),
+
+  /** Delete your own comment. */
+  removeComment: (commentId: number) => api.del<void>(`${BASE}/comments/${commentId}`),
+
+  /** My finished dogs that aren't already backing a post. */
+  shareable: () => api.get<UploadJob[]>(`${BASE}/shareable`),
+
+  byAuthor: (authorId: number) => api.get<ForumPost[]>(`${BASE}?authorId=${authorId}`),
 };

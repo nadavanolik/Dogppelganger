@@ -131,3 +131,89 @@ def delete_upload_files(job_id: int, content_type: str | None = None) -> int:
         except FileNotFoundError:
             pass
     return removed
+
+
+# ---------------------------------------------------- direct-message attachments
+#
+# Same sharding and same "the path is a function of the row id" rule as uploads,
+# for the same reasons. Kept separate from uploads rather than reusing that tree
+# because the retention rules differ: an upload is the input to a match and is
+# reachable from the gallery, while an attachment is private to two people for
+# as long as their message exists.
+
+ATTACHMENT_DISPLAY_PX = 512
+ATTACHMENT_THUMB_PX = 256
+
+# The single source of truth for what may be attached anywhere: the sniffer
+# validates against it, the writer picks its extension from it, and the serving
+# endpoint takes the response's Content-Type from it. The client's declared type
+# and filename are never consulted for any of those.
+ATTACHMENT_TYPES: dict[str, tuple[str, str]] = {
+    "image/jpeg": ("image", ".jpg"),
+    "image/png": ("image", ".png"),
+    "image/webp": ("image", ".webp"),
+    "video/mp4": ("video", ".mp4"),
+    "video/webm": ("video", ".webm"),
+}
+
+# Derivatives exist for images only. Video is stored exactly as received —
+# transcoding it would mean shipping ffmpeg, which is 100MB+ in an image that
+# already carries a 350MB ONNX encoder, and minutes of CPU per clip on a 1GB VM.
+ATTACHMENT_SIZES: dict[str, tuple[int, str]] = {
+    "display": (ATTACHMENT_DISPLAY_PX, ".webp"),
+    "thumb": (ATTACHMENT_THUMB_PX, ".webp"),
+}
+
+
+def attachment_root() -> Path:
+    return Path(os.getenv("ATTACHMENT_DATA_DIR", "data/attachments"))
+
+
+def attachment_shard(message_id: int) -> Path:
+    return attachment_root() / f"{message_id // SHARD_SIZE:04d}"
+
+
+def attachment_path(message_id: int, content_type: str) -> Path:
+    """The stored original: the video as received, or the re-encoded image."""
+    if content_type not in ATTACHMENT_TYPES:
+        raise ValueError(f"unsupported attachment type {content_type!r}")
+    _, ext = ATTACHMENT_TYPES[content_type]
+    return attachment_shard(message_id) / f"{message_id}-orig{ext}"
+
+
+def attachment_derivative_path(message_id: int, size: str) -> Path:
+    """A resized copy. Images only — video has none."""
+    if size not in ATTACHMENT_SIZES:
+        raise ValueError(
+            f"unknown attachment size {size!r}; expected one of {sorted(ATTACHMENT_SIZES)}"
+        )
+    _, ext = ATTACHMENT_SIZES[size]
+    return attachment_shard(message_id) / f"{message_id}-{size}{ext}"
+
+
+def ensure_attachment_dirs(message_id: int) -> None:
+    attachment_shard(message_id).mkdir(parents=True, exist_ok=True)
+
+
+def delete_attachment_files(message_id: int, content_type: str | None = None) -> int:
+    """Remove an attachment's original and every derivative. Returns the count.
+
+    Same retention rule as uploads: the bytes live exactly as long as the row
+    that points at them.
+    """
+    removed = 0
+    paths = [attachment_derivative_path(message_id, size) for size in ATTACHMENT_SIZES]
+    if content_type in ATTACHMENT_TYPES:
+        paths.append(attachment_path(message_id, content_type))
+    else:
+        # Content type unknown (or already nulled) — sweep every extension we
+        # could have written rather than leaving bytes behind.
+        for known in ATTACHMENT_TYPES:
+            paths.append(attachment_path(message_id, known))
+    for path in paths:
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            pass
+    return removed

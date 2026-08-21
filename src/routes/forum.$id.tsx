@@ -1,7 +1,8 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
+import { dmApi } from "@/lib/dmApi";
 import { forumApi, type ForumComment, type PostWithComments } from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
 import { MatchPair } from "@/components/MatchPair";
@@ -10,8 +11,7 @@ export default PostDetail;
 
 function PostDetail() {
   const { id } = useParams();
-  const { state, openConversation } = useStore();
-  const owner = state.user ?? state.users[0];
+  const { user: me } = useAuth();
   const navigate = useNavigate();
 
   const [post, setPost] = useState<PostWithComments | null>(null);
@@ -24,7 +24,7 @@ function PostDetail() {
     if (!id) return;
     let cancelled = false;
     forumApi
-      .get(Number(id), owner.id)
+      .get(Number(id))
       .then((row) => {
         if (!cancelled) setPost(row);
       })
@@ -36,17 +36,43 @@ function PostDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id, owner.id]);
+  }, [id]);
+
+  async function deletePost() {
+    if (!post) return;
+    // Worth spelling out that the photo survives — otherwise "delete" reads as
+    // if it takes the match with it, and people won't risk the button.
+    const warning = post.image
+      ? "Delete this post? Its comments go too. Your photo stays on your profile."
+      : "Delete this post? Its comments go too.";
+    if (!window.confirm(warning)) return;
+    await forumApi.removePost(post.id);
+    navigate("/forum");
+  }
+
+  async function deleteComment(commentId: number) {
+    if (!window.confirm("Delete this comment?")) return;
+    await forumApi.removeComment(commentId);
+    setPost((p) =>
+      p
+        ? {
+            ...p,
+            comments: p.comments.filter((c) => c.id !== commentId),
+            commentCount: Math.max(0, p.commentCount - 1),
+          }
+        : p,
+    );
+  }
 
   async function reactToPost(kind: "like" | "dislike") {
     if (!post) return;
-    const summary = await forumApi.react(owner.id, "post", post.id, kind);
+    const summary = await forumApi.react("post", post.id, kind);
     setPost((p) => (p ? { ...p, ...summary } : p));
   }
 
   async function reactToComment(comment: ForumComment, kind: "like" | "dislike") {
     if (!post) return;
-    const summary = await forumApi.react(owner.id, "comment", comment.id, kind);
+    const summary = await forumApi.react("comment", comment.id, kind);
     setPost((p) =>
       p
         ? {
@@ -61,7 +87,7 @@ function PostDetail() {
     if (!post || !body.trim() || posting) return;
     setPosting(true);
     try {
-      const comment = await forumApi.comment(post.id, owner.id, owner.username, body.trim());
+      const comment = await forumApi.comment(post.id, body.trim());
       setPost((p) =>
         p ? { ...p, comments: [...p.comments, comment], commentCount: p.commentCount + 1 } : p,
       );
@@ -107,7 +133,7 @@ function PostDetail() {
           {post.image && (
             <div className="mt-4">
               <MatchPair
-                humanSrc={uploadImageUrl(post.authorId, post.image.jobId)}
+                humanSrc={uploadImageUrl(post.image.jobId)}
                 dog={post.image.dog}
                 score={post.image.score}
                 sharedTraits={post.image.sharedTraits}
@@ -128,15 +154,25 @@ function PostDetail() {
             >
               👎 {post.dislikeCount}
             </button>
-            {post.authorId !== owner.id && (
+            {/* Null when the author deleted their account — there is nobody
+                left to message, even though the post itself survives. */}
+            {post.authorId !== null && post.authorId !== me?.id && (
               <button
-                onClick={() => {
-                  const c = openConversation(post.authorId, post.authorName);
-                  navigate(`/messages/${c.id}`);
+                onClick={async () => {
+                  const conversation = await dmApi.open(post.authorId as number);
+                  navigate(`/messages/${conversation.id}`);
                 }}
                 className="btn-pop btn-pop-hover bg-mint px-3 py-1 text-sm"
               >
                 💌 DM @{post.authorName}
+              </button>
+            )}
+            {post.authorId === me?.id && (
+              <button
+                onClick={deletePost}
+                className="btn-pop btn-pop-hover bg-card px-3 py-1 text-sm ml-auto text-destructive"
+              >
+                🗑 Delete post
               </button>
             )}
           </div>
@@ -162,6 +198,14 @@ function PostDetail() {
                   >
                     👎 {c.dislikeCount}
                   </button>
+                  {c.authorId === me?.id && (
+                    <button
+                      onClick={() => deleteComment(c.id)}
+                      className="btn-pop btn-pop-hover bg-card px-2 py-1 text-xs ml-auto text-destructive"
+                    >
+                      🗑
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

@@ -1,15 +1,35 @@
 import { dogSrc } from "@/lib/dogSrc";
-import type { DogMatch } from "@/lib/store";
+import type { SharedTrait } from "@/lib/uploadApi";
 
-export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" | "md" | "lg" }) {
+/**
+ * One human-to-dog pair in the gallery.
+ *
+ * Takes plain props rather than the old mock `DogMatch` object, so the same
+ * card serves the public gallery and the landing page from real API data.
+ * `humanUrl` is the shared match's photo, served by the API — for a shared
+ * match it needs no token, because sharing is what makes it public.
+ */
+export function DogCard({
+  dogIndex,
+  humanUrl,
+  username,
+  sharedTraits = [],
+  size = "md",
+}: {
+  dogIndex: number | null;
+  humanUrl?: string | null;
+  username: string;
+  sharedTraits?: SharedTrait[];
+  size?: "sm" | "md" | "lg";
+}) {
   const dim = size === "sm" ? "h-32" : size === "lg" ? "h-72" : "h-52";
 
   return (
     <div className="card-pop-sm overflow-hidden">
       <div className={`${dim} bg-muted flex items-center justify-center relative overflow-hidden`}>
-        {match.dogIndex != null ? (
+        {dogIndex != null ? (
           <img
-            src={dogSrc(match.dogIndex, size === "lg" ? "512" : "256")}
+            src={dogSrc(dogIndex, size === "lg" ? "512" : "256")}
             alt="the matched dog"
             className="w-full h-full object-cover"
           />
@@ -21,7 +41,15 @@ export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" |
       </div>
       <div className="p-3">
         <div className="flex items-center gap-2">
-          <span className="text-2xl">{match.humanImg.length <= 4 ? match.humanImg : "🧑"}</span>
+          {humanUrl ? (
+            <img
+              src={humanUrl}
+              alt="the person"
+              className="h-8 w-8 rounded-lg border-2 border-[var(--ink)] object-cover"
+            />
+          ) : (
+            <span className="text-2xl">🧑</span>
+          )}
           <span className="text-xl" aria-hidden="true">
             →
           </span>
@@ -29,12 +57,12 @@ export function DogCard({ match, size = "md" }: { match: DogMatch; size?: "sm" |
             🐶
           </span>
         </div>
-        {match.sharedTraits && match.sharedTraits.length > 0 && (
+        {sharedTraits.length > 0 && (
           <div className="mt-1 text-xs text-muted-foreground italic">
-            {match.sharedTraits.map((t) => t.label).join(" · ")}
+            {sharedTraits.map((t) => t.label).join(" · ")}
           </div>
         )}
-        <div className="mt-1 text-xs text-muted-foreground">@{match.username}</div>
+        <div className="mt-1 text-xs text-muted-foreground">@{username}</div>
       </div>
     </div>
   );

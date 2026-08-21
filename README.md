@@ -13,6 +13,12 @@ Three containers, orchestrated by `docker-compose.yml`:
 | `model` | FastAPI (Python)         | Auth (JWT), the model, real-time WebSocket |
 | `db`    | Postgres                 | Persistent storage                         |
 
+Accounts are real: passwords are bcrypt-hashed, every route derives the caller
+from a JWT, and every photo, post, comment and game score is a foreign key into
+`users`. One authenticated WebSocket per signed-in client carries direct
+messages, notifications and upload progress. See `DATA_STORAGE.md` §4.3b for the
+schema and what deleting an account does.
+
 ## Setting it up on a new machine
 
 The code is all in git, but two large things deliberately are not: the **5,239
@@ -128,5 +134,11 @@ for real gallery matches and a real database later without touching anything els
 ```bash
 cd backend
 pip install -r requirements.txt -r requirements-dev.txt
-pytest                        # game engine + API + WebSocket
+pytest                        # accounts, DMs, uploads, gallery, game engine
 ```
+
+Players are logged-in users: the game endpoints take the player from the token
+rather than from a `playerId` in the body, so a score can only be filed under
+the account that earned it. The five game-engine test files still drive the hub
+directly with plain string ids — that seam is exactly what kept them from
+needing a rewrite.

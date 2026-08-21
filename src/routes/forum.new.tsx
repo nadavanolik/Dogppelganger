@@ -1,8 +1,8 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { AppShell, RequireAuth } from "@/components/AppShell";
-import { useStore } from "@/lib/store";
-import { forumApi, ForumApiError } from "@/lib/forumApi";
+import { AppShell } from "@/components/AppShell";
+
+import { forumApi, ApiError } from "@/lib/forumApi";
 import { uploadImageUrl, type UploadJob } from "@/lib/uploadApi";
 
 export default NewPost;
@@ -10,16 +10,12 @@ export default NewPost;
 function NewPost() {
   return (
     <AppShell>
-      <RequireAuth>
-        <Inner />
-      </RequireAuth>
+      <Inner />
     </AppShell>
   );
 }
 
 function Inner() {
-  const { state } = useStore();
-  const owner = state.user ?? state.users[0];
   const navigate = useNavigate();
   const [body, setBody] = useState("");
   const [shareable, setShareable] = useState<UploadJob[]>([]);
@@ -31,7 +27,7 @@ function Inner() {
   useEffect(() => {
     let cancelled = false;
     forumApi
-      .shareable(owner.id)
+      .shareable()
       .then((rows) => {
         if (!cancelled) setShareable(rows);
       })
@@ -42,17 +38,17 @@ function Inner() {
     return () => {
       cancelled = true;
     };
-  }, [owner.id]);
+  }, []);
 
   async function publish() {
     if (!body.trim() || submitting) return;
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const post = await forumApi.create(owner.id, owner.username, body.trim(), selected);
+      const post = await forumApi.create(body.trim(), selected);
       navigate(`/forum/${post.id}`);
     } catch (err) {
-      setSubmitError(err instanceof ForumApiError ? err.message : "Couldn't publish that post.");
+      setSubmitError(err instanceof ApiError ? err.message : "Couldn't publish that post.");
     } finally {
       setSubmitting(false);
     }
@@ -94,7 +90,7 @@ function Inner() {
                   className={`card-pop-sm p-2 text-left ${selected === job.id ? "ring-4 ring-[var(--primary)]" : ""}`}
                 >
                   <img
-                    src={uploadImageUrl(owner.id, job.id, "thumb")}
+                    src={uploadImageUrl(job.id, "thumb")}
                     className="w-full aspect-square object-cover rounded-lg border-2 border-[var(--ink)]"
                     alt={job.filename}
                   />

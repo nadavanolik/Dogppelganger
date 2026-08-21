@@ -5,15 +5,18 @@ WebSocket (``ws.py``), and everything else — lobby discovery, the untimed solo
 run, leaderboards — is plain REST, because it is easier to read, easier to debug
 in /api/docs, and matches ProjectPlan 2.8/2.9.
 
-``playerId``/``playerName`` travel in request bodies for the same reason
-``ws.py`` accepts them as query params: the SPA's login is still local-only. See
-the identity seam note there.
+Who is playing comes from the token, not the body. The ``PlayerRef`` that used
+to carry ``playerId``/``playerName`` is gone: it let anyone submit a score under
+anyone else's name, which is a strange thing to leave in a game that has a
+leaderboard.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from ..deps import get_current_user
+from ..models import User
 from . import solo, solo_match, store
 from .hub import hub
 from .rooms import GAME_DOUBLE, GAME_TYPES, MATCH_SECONDS_CHOICES, ROUNDS_CHOICES, SECONDS_CHOICES
@@ -21,12 +24,7 @@ from .rooms import GAME_DOUBLE, GAME_TYPES, MATCH_SECONDS_CHOICES, ROUNDS_CHOICE
 router = APIRouter(prefix="/api/game", tags=["game"])
 
 
-class PlayerRef(BaseModel):
-    playerId: str = Field(min_length=1, max_length=64)
-    playerName: str = Field(default="anon", max_length=24)
-
-
-class CreateRoom(PlayerRef):
+class CreateRoom(BaseModel):
     name: str = Field(default="", max_length=60)
     gameType: str = Field(default=GAME_DOUBLE)
 
@@ -75,14 +73,14 @@ async def list_rooms():
 
 
 @router.post("/rooms", status_code=201)
-async def create_room(data: CreateRoom):
+async def create_room(data: CreateRoom, user: User = Depends(get_current_user)):
     """Create a room and become its host.
 
     The creator is not a member yet — they join over the WebSocket, same as
     everyone else, so there is only one code path for membership.
     """
     try:
-        room = hub.rooms.create(data.name, data.playerId, data.playerName, data.gameType)
+        room = hub.rooms.create(data.name, str(user.id), user.username, data.gameType)
     except ValueError as exc:
         raise HTTPException(422, str(exc))
     return _room_summary(room)
@@ -109,15 +107,30 @@ async def room_state(room_id: str):
 # ---------------------------------------------------------------------- solo
 
 
+def _own_run(runs: dict, run_token: str, user: User):
+    """A run of the caller's, or None.
+
+    Someone else's run is reported as "finished or expired" rather than as
+    forbidden — the same "not yours means it doesn't exist" rule the upload
+    endpoints use, so a run token can't be probed for validity.
+    """
+    run = runs.get(run_token)
+    if run is None or run.player_id != str(user.id):
+        return None
+    return run
+
+
 @router.post("/solo/start")
-async def solo_start(data: PlayerRef):
+async def solo_start(user: User = Depends(get_current_user)):
     """Begin a Streak Survival run and get its first question."""
-    return solo.start_run(data.playerId, data.playerName)
+    return solo.start_run(str(user.id), user.username)
 
 
 @router.post("/solo/answer")
-async def solo_answer(data: SoloAnswer):
+async def solo_answer(data: SoloAnswer, user: User = Depends(get_current_user)):
     """Answer the current question; get the verdict and the next one."""
+    if _own_run(solo._runs, data.runToken, user) is None:
+        raise HTTPException(404, "That run has finished or expired — start a new one.")
     try:
         return solo.answer(data.runToken, data.choice)
     except solo.UnknownRun:
@@ -125,14 +138,16 @@ async def solo_answer(data: SoloAnswer):
 
 
 @router.post("/solo/match/start")
-async def solo_match_start(data: PlayerRef):
+async def solo_match_start(user: User = Depends(get_current_user)):
     """Begin a Mix & Match run and get its first board."""
-    return solo_match.start_run(data.playerId, data.playerName)
+    return solo_match.start_run(str(user.id), user.username)
 
 
 @router.post("/solo/match/submit")
-async def solo_match_submit(data: SoloBoard):
+async def solo_match_submit(data: SoloBoard, user: User = Depends(get_current_user)):
     """Submit a finished board; get it marked and the next one dealt."""
+    if _own_run(solo_match._runs, data.runToken, user) is None:
+        raise HTTPException(404, "That run has finished or expired — start a new one.")
     try:
         return solo_match.submit(data.runToken, data.pairs)
     except solo_match.UnknownRun:

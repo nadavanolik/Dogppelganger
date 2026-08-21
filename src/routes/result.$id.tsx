@@ -1,8 +1,8 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { AppShell, RequireAuth } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { SharedTraits } from "@/components/MatchPair";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 import { uploadApi, uploadImageUrl, type UploadJob } from "@/lib/uploadApi";
 import { useUploadJob } from "@/lib/uploadFeed";
 
@@ -11,9 +11,7 @@ export default ResultPage;
 function ResultPage() {
   return (
     <AppShell>
-      <RequireAuth>
-        <Result />
-      </RequireAuth>
+      <Result />
     </AppShell>
   );
 }
@@ -31,9 +29,9 @@ function ResultPage() {
  */
 function Result() {
   const { id } = useParams();
-  const { state } = useStore();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const owner = state.user ?? state.users[0];
+  const owner = user!;
 
   const jobId = Number(id);
   const [job, setJob] = useState<UploadJob | null>(null);
@@ -46,7 +44,7 @@ function Result() {
     }
     let cancelled = false;
     uploadApi
-      .get(owner.id, jobId)
+      .get(jobId)
       .then((row) => !cancelled && setJob(row))
       .catch((err) => !cancelled && setError(err instanceof Error ? err.message : "Not found."));
     return () => {
@@ -112,7 +110,7 @@ function Result() {
 
       <div className="mt-8 flex items-center justify-center gap-6">
         <img
-          src={uploadImageUrl(owner.id, shown.id)}
+          src={uploadImageUrl(shown.id)}
           alt="your photo"
           className="h-36 w-36 rounded-2xl border-2 border-[var(--ink)] object-cover"
         />

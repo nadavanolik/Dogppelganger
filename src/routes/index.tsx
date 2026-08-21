@@ -1,8 +1,13 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { DogCard } from "@/components/DogCard";
 import { dogSrc } from "@/lib/dogSrc";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
+import { dmApi } from "@/lib/dmApi";
+import { forumApi, type ForumPost } from "@/lib/forumApi";
+import { galleryApi, notificationApi, type GalleryItem } from "@/lib/galleryApi";
+import { useUploadFeed } from "@/lib/uploadFeed";
 
 export default Index;
 
@@ -12,13 +17,20 @@ export default Index;
 const EXAMPLE_DOG = 1288;
 
 function Index() {
-  const { state } = useStore();
-  return <AppShell>{state.user ? <SignedInHome /> : <PublicLanding />}</AppShell>;
+  const { user } = useAuth();
+  return <AppShell>{user ? <SignedInHome /> : <PublicLanding />}</AppShell>;
 }
 
 function PublicLanding() {
-  const { state } = useStore();
-  const shared = state.matches.filter((m) => m.shared && m.status === "done").slice(0, 6);
+  // The one anonymous API call in the app: a visitor with no account still sees
+  // real shared matches here rather than a wall of placeholders.
+  const [shared, setShared] = useState<GalleryItem[]>([]);
+  useEffect(() => {
+    galleryApi
+      .featured(6)
+      .then(setShared)
+      .catch(() => {});
+  }, []);
   return (
     <>
       <section className="grid md:grid-cols-2 gap-8 items-center">
@@ -59,7 +71,7 @@ function PublicLanding() {
                 </span>
               ))}
             </span>
-            <span>{state.matches.filter((m) => m.shared).length}+ humans dogified this week</span>
+            <span>{shared.length}+ humans dogified this week</span>
           </div>
         </div>
         <div className="relative">
@@ -91,8 +103,14 @@ function PublicLanding() {
           <span className="text-sm text-muted-foreground italic">sign up to browse & react</span>
         </div>
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5 relative">
-          {shared.map((m) => (
-            <DogCard key={m.id} match={m} />
+          {shared.map((item) => (
+            <DogCard
+              key={item.jobId}
+              dogIndex={item.dogIndex}
+              humanUrl={item.thumbUrl}
+              username={item.owner.username}
+              sharedTraits={item.sharedTraits}
+            />
           ))}
         </div>
       </section>
@@ -143,24 +161,40 @@ function PublicLanding() {
 }
 
 function SignedInHome() {
-  const { state } = useStore();
-  const me = state.user!;
-  const queue = state.matches.filter((m) => m.userId === me.id && m.status !== "done");
-  const myNotifs = state.notifications.filter((n) => n.userId === me.id);
-  const unreadDMs = myNotifs.filter((n) => n.kind === "dm" && !n.read).length;
-  const unread = myNotifs.filter((n) => !n.read).length;
+  const { user } = useAuth();
+  const me = user!;
+  // Everything on this page is real now. It used to be computed from a
+  // localStorage blob that only this browser could see.
+  const { jobs } = useUploadFeed();
+  const queue = jobs.filter((j) => j.status !== "done" && j.status !== "error");
 
-  const myPosts = state.posts.filter((p) => p.userId === me.id);
-  const myComments = state.posts.flatMap((p) => p.comments.filter((c) => c.userId === me.id));
-  const likesReceived =
-    myPosts.reduce((n, p) => n + p.likes.length, 0) +
-    myComments.reduce((n, c) => n + c.likes.length, 0);
+  const [unread, setUnread] = useState(0);
+  const [unreadDMs, setUnreadDMs] = useState(0);
+  const [posts, setPosts] = useState<ForumPost[]>([]);
+  const [galleryStrip, setGalleryStrip] = useState<GalleryItem[]>([]);
 
-  const recentPosts = [...state.posts].sort((a, b) => b.createdAt - a.createdAt).slice(0, 4);
-  const galleryStrip = state.matches
-    .filter((m) => m.shared && m.status === "done")
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 6);
+  useEffect(() => {
+    notificationApi
+      .list()
+      .then((res) => setUnread(res.unread))
+      .catch(() => {});
+    dmApi
+      .conversations()
+      .then((rows) => setUnreadDMs(rows.reduce((sum, c) => sum + c.unreadCount, 0)))
+      .catch(() => {});
+    forumApi
+      .list()
+      .then(setPosts)
+      .catch(() => {});
+    galleryApi
+      .featured(6)
+      .then(setGalleryStrip)
+      .catch(() => {});
+  }, []);
+
+  const myPosts = posts.filter((p) => p.authorId === me.id);
+  const likesReceived = myPosts.reduce((n, p) => n + p.likeCount, 0);
+  const recentPosts = posts.slice(0, 4);
 
   return (
     <div className="space-y-10">
@@ -185,19 +219,19 @@ function SignedInHome() {
             </Link>
           </div>
           <ul className="mt-3 space-y-2">
-            {queue.map((m) => (
+            {queue.map((job) => (
               <li
-                key={m.id}
+                key={job.id}
                 className="flex items-center gap-3 p-2 rounded-xl bg-muted border-2 border-[var(--ink)]"
               >
-                <div className="text-2xl">{m.humanImg.length <= 4 ? m.humanImg : "🧑"}</div>
+                <div className="text-2xl">🧑</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-bold">
-                    {m.urgent ? "🚨 Urgent" : "In queue"} · {m.status}
+                    {job.urgent ? "🚨 Urgent" : "In queue"} · {job.status}
                   </div>
                   <div className="h-1.5 rounded-full bg-card border border-[var(--ink)] mt-1 overflow-hidden">
                     <div
-                      className={`h-full ${m.status === "queued" ? "w-1/4 bg-sunshine" : "w-2/3 bg-primary animate-pulse"}`}
+                      className={`h-full ${job.status === "queued" ? "w-1/4 bg-sunshine" : "w-2/3 bg-primary animate-pulse"}`}
                     />
                   </div>
                 </div>
@@ -230,11 +264,11 @@ function SignedInHome() {
                   to={`/forum/${p.id}`}
                   className="block p-3 rounded-xl border-2 border-[var(--ink)] bg-card hover:bg-muted transition"
                 >
-                  <div className="font-bold truncate">{p.title}</div>
+                  <div className="font-bold truncate">{p.body}</div>
                   <div className="text-xs text-muted-foreground flex gap-3 mt-1">
-                    <span>@{p.username}</span>
-                    <span>💬 {p.comments.length}</span>
-                    <span>👍 {p.likes.length}</span>
+                    <span>@{p.authorName}</span>
+                    <span>💬 {p.commentCount}</span>
+                    <span>👍 {p.likeCount}</span>
                   </div>
                 </Link>
               </li>
@@ -258,14 +292,14 @@ function SignedInHome() {
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-2">
-              {galleryStrip.map((m) => (
+              {galleryStrip.map((item) => (
                 <div
-                  key={m.id}
+                  key={item.jobId}
                   className="aspect-square rounded-xl border-2 border-[var(--ink)] bg-muted flex items-center justify-center overflow-hidden"
                 >
-                  {m.dogIndex != null ? (
+                  {item.dogIndex != null ? (
                     <img
-                      src={dogSrc(m.dogIndex, "256")}
+                      src={dogSrc(item.dogIndex, "256")}
                       alt="a shared match"
                       className="w-full h-full object-cover"
                     />

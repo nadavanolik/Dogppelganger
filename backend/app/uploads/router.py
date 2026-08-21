@@ -13,13 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import UploadJob
+from ..deps import get_current_user, get_media_user_optional
+from ..models import Comment, Post, Reaction, UploadJob, User
 from ..storage import layout
 from ..storage.imaging import ImageRejected, decode, write_derivatives
 
@@ -29,7 +31,6 @@ MAX_FILE_BYTES = 10 * 1024 * 1024  # a phone photo fits well inside this
 # A single request can't be used to fill the disk in one shot. Batches larger
 # than this are a queue-fairness problem anyway (see queue.py).
 MAX_FILES_PER_REQUEST = 20
-MAX_OWNER_ID = 64
 
 # The client's declared Content-Type is just a hint — sniff the real format
 # from the file's own magic bytes so a renamed .exe can't sneak through.
@@ -51,26 +52,24 @@ def _sniff(data: bytes) -> str | None:
     return None
 
 
-def _clean_owner_id(owner_id: str) -> str:
-    return owner_id.strip()[:MAX_OWNER_ID]
-
-
 @router.post("", status_code=201)
 async def upload_images(
-    ownerId: str = Form(...),
     files: list[UploadFile] = File(...),
     urgent: str = Form("[]"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Queue every valid image in the batch; report the rest as rejected.
 
     `urgent` is a JSON array of booleans, positionally matched to `files` —
     it's stored on the job today but doesn't affect processing order yet
     (see queue.py's priority_key).
+
+    The photo belongs to whoever holds the token. There used to be an `ownerId`
+    form field here that the server took on faith, which meant anyone could
+    upload into anyone's account by typing a different string.
     """
-    owner_id = _clean_owner_id(ownerId)
-    if not owner_id:
-        raise HTTPException(422, "ownerId is required")
+    owner_id = user.id
     if not files:
         raise HTTPException(422, "no files were uploaded")
     if len(files) > MAX_FILES_PER_REQUEST:
@@ -162,11 +161,14 @@ async def upload_images(
 
 
 @router.get("")
-def list_uploads(ownerId: str, db: Session = Depends(get_db)):
-    """An owner's jobs, newest first — their personal queue/results area."""
+def list_uploads(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """My jobs, newest first — the personal queue/results area."""
     rows = (
         db.query(UploadJob)
-        .filter(UploadJob.owner_id == _clean_owner_id(ownerId))
+        .filter(UploadJob.owner_id == user.id)
         .order_by(UploadJob.id.desc())
         .all()
     )
@@ -174,33 +176,72 @@ def list_uploads(ownerId: str, db: Session = Depends(get_db)):
 
 
 @router.get("/{job_id}")
-def get_upload(job_id: int, ownerId: str, db: Session = Depends(get_db)):
+def get_upload(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """One job, for the result page.
 
-    Same ownership rule as the image endpoint, and the same deliberate
-    conflation of "not yours" with "doesn't exist": a 403 would confirm the id
-    is real, letting someone probe for other people's uploads.
+    Same deliberate conflation of "not yours" with "doesn't exist" as the image
+    endpoint: a 403 would confirm the id is real, letting someone probe for
+    other people's uploads.
     """
     job = db.get(UploadJob, job_id)
-    if job is None or job.owner_id != _clean_owner_id(ownerId):
+    if job is None or job.owner_id != user.id:
         raise HTTPException(404, "No such upload.")
     return job.as_dict()
 
 
+def _may_read_image(db: Session, job: UploadJob, viewer: User | None) -> bool:
+    """Who can see an uploaded photo.
+
+    Three arms, in order of how public they are:
+
+    1. **Shared to the gallery** — readable by anyone, logged in or not. That
+       is not a leak, it is what sharing means; the owner opted in and can
+       reverse it. It has to be anonymous because ProjectPlan §2.1 puts a
+       featured strip of the gallery on the logged-out landing page.
+    2. **The owner** — the obvious one.
+    3. **Backs a forum post** — readable by any logged-in user. Without this
+       arm every thumbnail in the forum feed would 404, because a post's photo
+       belongs to its author, not to the person reading the thread.
+
+    Arm 3 replaces a real bug rather than adding permissiveness: the frontend
+    used to fetch these by passing the *author's* id as `ownerId`, so the old
+    "ownership check" was defeated by anyone who read the post JSON.
+    """
+    if job.shared_at is not None:
+        return True
+    if viewer is None:
+        return False
+    if job.owner_id == viewer.id:
+        return True
+    return db.query(Post.id).filter(Post.image_job_id == job.id).first() is not None
+
+
 @router.get("/{job_id}/image")
-def upload_image(job_id: int, ownerId: str, size: str = "display", db: Session = Depends(get_db)):
-    """Serve one of an owner's uploaded photos.
+def upload_image(
+    job_id: int,
+    size: str = "display",
+    db: Session = Depends(get_db),
+    viewer: User | None = Depends(get_media_user_optional),
+):
+    """Serve one uploaded photo, if the caller is allowed to see it.
 
     Unlike dog photos — which nginx serves straight off a read-only mount —
-    user photos are personal data, so every read goes through this ownership
-    check and is marked no-store. That is slower, and it is the right
-    trade-off (DATA_STORAGE.md §2.2).
+    user photos are personal data, so every read goes through this check and is
+    marked no-store. That is slower, and it is the right trade-off
+    (DATA_STORAGE.md §2.2).
+
+    `no-store` also does real work here: it is what makes unsharing a match take
+    effect immediately rather than whenever a cache expires.
     """
     if size not in _SERVABLE:
         raise HTTPException(422, f"unknown size {size!r}; expected one of {sorted(_SERVABLE)}")
 
     job = db.get(UploadJob, job_id)
-    if job is None or job.owner_id != _clean_owner_id(ownerId):
+    if job is None or not _may_read_image(db, job, viewer):
         raise HTTPException(404, "No such upload.")
 
     path = layout.upload_path(job_id, size)
@@ -218,3 +259,76 @@ def upload_image(job_id: int, ownerId: str, size: str = "display", db: Session =
         media_type=media_type,
         headers={"Cache-Control": "private, no-store"},
     )
+
+
+def _own_job(db: Session, job_id: int, user: User) -> UploadJob:
+    job = db.get(UploadJob, job_id)
+    if job is None or job.owner_id != user.id:
+        raise HTTPException(404, "No such upload.")
+    return job
+
+
+@router.post("/{job_id}/share")
+def share_upload(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Publish a finished match to the public gallery. Idempotent."""
+    job = _own_job(db, job_id, user)
+    if job.status != "done" or job.dog_asset_id is None:
+        # Sharing a queued or failed job would put an empty card in the
+        # gallery, and sharing something that never found a dog would put a
+        # photo of a person there with nothing to pair it with.
+        raise HTTPException(422, "Only a finished match can be shared.")
+    if job.shared_at is None:
+        job.shared_at = datetime.utcnow()
+        db.commit()
+        db.refresh(job)
+    return job.as_dict()
+
+
+@router.delete("/{job_id}/share")
+def unshare_upload(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Take a match back out of the gallery. Idempotent.
+
+    Takes effect on the very next request: the access check re-runs against the
+    row every time, and the image response is `no-store`, so there is no cached
+    copy to outlive the decision.
+    """
+    job = _own_job(db, job_id, user)
+    if job.shared_at is not None:
+        job.shared_at = None
+        db.commit()
+        db.refresh(job)
+    return job.as_dict()
+
+
+@router.delete("/{job_id}", status_code=204)
+def delete_upload(
+    job_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Delete one upload: its files, its row, and any post that shared it.
+
+    Files first, while the id is still known. The post has to go too — its
+    whole content was that photo, and `Post.image_job_id` is unique, so leaving
+    it would strand a caption pointing at nothing.
+    """
+    job = _own_job(db, job_id, user)
+    layout.delete_upload_files(job.id, job.content_type)
+    post = db.query(Post).filter(Post.image_job_id == job.id).first()
+    if post is not None:
+        db.query(Comment).filter(Comment.post_id == post.id).delete(synchronize_session=False)
+        db.query(Reaction).filter(
+            Reaction.target_type == "post", Reaction.target_id == post.id
+        ).delete(synchronize_session=False)
+        db.delete(post)
+    db.delete(job)
+    db.commit()
+    return None

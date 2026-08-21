@@ -79,6 +79,18 @@ cp .env.example .env
 nano .env    # set SECRET_KEY + a real POSTGRES_PASSWORD
 ```
 
+⚠️ **`SECRET_KEY` is no longer optional.** It signs every login token, so a
+placeholder value means anyone who can read this repo can mint a token for any
+account. The app now refuses to start against Postgres if it is left at a known
+default. Generate one with:
+
+```bash
+openssl rand -hex 32
+```
+
+Changing it later logs everybody out (their tokens no longer verify), which is
+inconvenient but not dangerous.
+
 ### 4. Make the GHCR images pullable
 
 The simplest option for a student project: after the **first** successful
@@ -134,6 +146,134 @@ on every upload, forum and match request at once. To inspect the plan by hand:
 ```bash
 cd ~/dogppelganger && docker compose run --rm model python scripts/migrate_schema.py --dry-run
 ```
+
+#### One-time reset when real users land
+
+`migrate_schema.py` can add and drop columns; it cannot turn a `VARCHAR(64)`
+holding `"u_moodyoak"` into an integer foreign key, because no `USING`
+expression exists for that. So the change that makes users real ships with a
+deliberate wipe. The full sequence is in **[Releasing the real-users
+change](#releasing-the-real-users-change)** below — do not run it standalone
+without reading that, because the order matters.
+
+It needs both `--yes` and `ALLOW_DB_RESET=1`, prints what it will destroy, and
+leaves the dog corpus alone — **both the files and the `dog_assets` /
+`calibrations` rows**, which hold no user data and would otherwise cost the
+700 MB archive plus the embedding and calibration passes to rebuild. It is
+**not** in `deploy.yml` on purpose: a destructive step must never run on every
+push.
+
+⚠️ Do **not** use `docker compose down -v` for this. That removes `dogdata` too,
+and re-ingesting the corpus is a 226 MB download and a long pass.
+
+---
+
+## Releasing the real-users change
+
+Read this end to end before starting. There is a window where the site is down,
+and the order is what keeps it short.
+
+### Why there is a window at all
+
+Pushing to `main` triggers the deploy automatically: it builds the images, SSHes
+in, runs `migrate_schema.py`, and restarts. But `migrate_schema.py` cannot make
+this particular change, so it will report "nothing to do" and the new code will
+come up against the **old schema** — where `owner_id` is still a `VARCHAR`.
+Postgres will reject the queries and the API will error until the reset is run.
+
+So the reset is not optional cleanup. It is part of the release, and it happens
+within a minute or two of the merge.
+
+### 0. Before you merge anything
+
+The VM is not on all the time. Start it, then:
+
+```bash
+ssh vmadmin@52.188.127.173
+cd ~/dogppelganger
+cat .env 2>/dev/null || echo "no .env — running on compose defaults"
+```
+
+⚠️ **If `SECRET_KEY` is missing or a placeholder, fix it now.** The new backend
+refuses to start against Postgres with a known default value, so the `model`
+container will crash-loop and the reset in step 3 will have nothing to run in.
+A deployment with no `.env` at all has been running on `SECRET_KEY=change-me`,
+which is one of the values it will refuse.
+
+⚠️ **Do not copy `.env.example` verbatim.** Its `POSTGRES_PASSWORD` is a
+placeholder, and Postgres only reads that variable when it *first* initialises
+its data directory. On a server that has already run, the `dbdata` volume keeps
+the original password, so a new value here only makes the API build a connection
+string the database rejects. Find out what is actually in use and match it:
+
+```bash
+docker compose exec model printenv DATABASE_URL   # authoritative — it works today
+```
+
+Then write the file, changing only the signing key:
+
+```bash
+cat > .env <<'EOF'
+SECRET_KEY=REPLACE_ME
+POSTGRES_USER=dogapp
+POSTGRES_PASSWORD=dogapp
+POSTGRES_DB=dogppelganger
+EOF
+sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$(openssl rand -hex 32)|" .env
+
+docker compose up -d && curl -s localhost/api/health
+```
+
+Rotating the signing key logs out everyone currently signed in, which does not
+matter here — step 3 deletes the accounts anyway.
+
+### 1. Fix the build pipeline first, on its own
+
+Deploys have been failing since the GHA build cache was added to the model step:
+`build-push-action` was using the default `docker` driver, which cannot export
+cache, so buildx died before building anything. `docker/setup-buildx-action` is
+the fix.
+
+Land that **before** the feature merge, and let it deploy on its own. You want
+to know the pipeline is healthy before you also change the schema — otherwise a
+red deploy has two possible causes and you're debugging both at once.
+
+### 2. Merge the feature
+
+Open a PR from `feat/real-users` into `main` (this is also the first time the
+branch gets CI, which runs lint, typecheck, build and the 284 tests), then
+merge. The deploy fires automatically. Expect the site to be broken from the
+moment the containers restart until step 3 completes.
+
+### 3. Reset, immediately
+
+```bash
+ssh vmadmin@52.188.127.173
+cd ~/dogppelganger
+docker compose run --rm -e ALLOW_DB_RESET=1 model python scripts/reset_db.py --yes
+docker compose up -d
+```
+
+Every account, photo, post, message and leaderboard entry is gone; the dog
+corpus is untouched, so matching still works. The forum re-seeds itself with
+three demo accounts on the next start.
+
+### 4. Check it
+
+```bash
+curl -s http://52.188.127.173/api/health
+curl -s http://52.188.127.173/api/gallery | head -c 200   # public, no auth
+```
+
+Then in a browser: sign up, upload a photo (over 1 MB — that path was broken
+before this release), share the match, open the gallery logged out, and send
+yourself a DM from a second account in a private window.
+
+### 5. What is deliberately not automated
+
+- The reset. Destructive and one-time.
+- Turning the VM on. It is off by default and that is intentional.
+- HEIC photo support and the remaining follow-ups in `MIGRATION.md`.
 
 ### Seed the dog corpus (once, after the first deploy)
 

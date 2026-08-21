@@ -1,23 +1,22 @@
 """Multi-image upload + priority queue: turn a batch of photos into dogs.
 
-Three pieces:
-* ``router.py`` — REST: upload files, list your jobs, fetch a job's image.
+Two pieces:
+* ``router.py`` — REST: upload files, list your jobs, fetch a job's image,
+  share a finished match to the public gallery.
 * ``queue.py``  — the background worker pool that turns queued jobs into
   finished matches (or errors). See its docstring for the priority seam —
   today's ordering is a placeholder that later gets replaced.
-* ``ws.py``     — pushes an ``upload_update`` event to whoever owns a job
-  whenever its status changes, so the client updates live with no polling.
 
-Identity here is the same seam as ``app/game``: a client-supplied ``ownerId``
-string, not a real login, because the SPA's auth is still local-only.
+There used to be a third: a `ws.py` that pushed `upload_update` events over its
+own socket at ``/api/uploads/ws``, keyed by a client-supplied owner string. It
+is gone. The events now go out over the single authenticated socket in
+``app/routers/ws.py``, keyed by the real user id — one connection per client,
+one registry, one identity rule. The queue still pushes through the same
+``Notify`` seam, so nothing about the worker changed.
+
+Every photo belongs to a real user row: ``UploadJob.owner_id`` is a foreign key
+into ``users``, and the server takes it from the caller's token.
 """
-from fastapi import APIRouter
-
-from .router import router as _rest_router
-from .ws import router as _ws_router
-
-router = APIRouter()
-router.include_router(_rest_router)
-router.include_router(_ws_router)
+from .router import router
 
 __all__ = ["router"]

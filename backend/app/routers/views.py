@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..deps import get_current_user
 from ..model import CorpusEmpty, NoFaceFound, NotCalibrated, match_dog
-from ..models import Match
+from ..models import Match, User
 from ..schemas import MatchCreate
 from ..storage.imaging import ImageRejected, decode
 
@@ -37,7 +38,11 @@ def _decode_payload(payload: str) -> bytes:
 
 
 @router.post("/match", status_code=201)
-def create_match(data: MatchCreate, db: Session = Depends(get_db)):
+def create_match(
+    data: MatchCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     """Match one photo synchronously and store the result.
 
     The batch path in app/uploads is the main one — it stores the photo, queues
@@ -63,7 +68,7 @@ def create_match(data: MatchCreate, db: Session = Depends(get_db)):
         raise HTTPException(503, str(exc)) from exc
 
     match = Match(
-        user_id=data.userId,
+        user_id=user.id,
         dog_asset_id=result.dog_asset_id,
         score=result.score,
         shared_traits=result.shared_traits,
@@ -75,7 +80,21 @@ def create_match(data: MatchCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/matches")
-def list_matches(db: Session = Depends(get_db)):
-    """Return recent matches (newest first)."""
-    rows = db.query(Match).order_by(Match.created_at.desc()).limit(50).all()
+def list_matches(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return *my* recent matches, newest first.
+
+    This used to return the 50 most recent matches across every account with no
+    filter at all — which was harmless while a match belonged to nobody, and a
+    privacy leak the moment one belongs to a person.
+    """
+    rows = (
+        db.query(Match)
+        .filter(Match.user_id == user.id)
+        .order_by(Match.id.desc())
+        .limit(50)
+        .all()
+    )
     return [m.as_dict() for m in rows]

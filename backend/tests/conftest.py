@@ -29,6 +29,7 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{Path(_TMP).as_posix()}/test.d
 # GAME_DATA_DIR above.
 os.environ["DOG_DATA_DIR"] = str(Path(_TMP) / "dogs")
 os.environ["UPLOAD_DATA_DIR"] = str(Path(_TMP) / "uploads")
+os.environ["ATTACHMENT_DATA_DIR"] = str(Path(_TMP) / "attachments")
 
 from app.game import rooms, solo, solo_match, store  # noqa: E402  (must follow the env setup)
 from app.game.hub import Hub, Player  # noqa: E402
@@ -192,6 +193,78 @@ def client():
 
     with TestClient(app) as test_client:
         yield test_client
+
+
+# ------------------------------------------------------------------ accounts
+#
+# Every fixture below signs up through the real API rather than inserting a row,
+# so the tests exercise hashing and token issuing the same way a browser does.
+
+
+@pytest.fixture
+def user_factory(client):
+    """Create a real account and return its details plus a live token.
+
+    Emails and usernames are unique per call, and that is not tidiness: the
+    whole session shares one SQLite file and nothing truncates `users` between
+    tests, so a fixed address would 409 on the second test that asked for one.
+    """
+    from uuid import uuid4
+
+    def make(password: str = "hunter2hunter2") -> dict:
+        tag = uuid4().hex[:8]
+        payload = {
+            "email": f"u{tag}@test.dog",
+            "username": f"user_{tag}",
+            "password": password,
+        }
+        res = client.post("/api/auth/signup", json=payload)
+        assert res.status_code == 201, res.text
+        body = res.json()
+        return {
+            "id": body["user"]["id"],
+            "email": payload["email"],
+            "username": payload["username"],
+            "password": password,
+            "token": body["access_token"],
+            "media_token": body["media_token"],
+            "headers": {"Authorization": f"Bearer {body['access_token']}"},
+        }
+
+    return make
+
+
+@pytest.fixture
+def user(user_factory):
+    return user_factory()
+
+
+@pytest.fixture
+def other_user(user_factory):
+    return user_factory()
+
+
+@pytest.fixture
+def auth_client(client, user):
+    """A TestClient that is signed in as `user` for every request."""
+    client.headers.update(user["headers"])
+    return client
+
+
+def make_video_bytes(brand: bytes = b"isom", size: int = 2048) -> bytes:
+    """A minimal file that sniffs as MP4 (or, with another brand, doesn't).
+
+    Only has to satisfy the magic-byte check — nothing decodes it, which is
+    precisely the limitation the attachment code is designed around. Built here
+    rather than committed so the repo stays free of binaries, same reasoning as
+    `make_image`.
+
+    Pass ``brand=b"qt  "`` for a QuickTime .mov, which must be rejected: it
+    shares the `ftyp` prefix with MP4 and is the case a naive sniffer gets
+    wrong.
+    """
+    header = (0x18).to_bytes(4, "big") + b"ftyp" + brand + b"\x00\x00\x02\x00" + brand
+    return header + b"\x00" * max(0, size - len(header))
 
 
 # ------------------------------------------------------------------ images

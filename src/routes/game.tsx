@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { AppShell, RequireAuth } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { DogOption, QuestionPrompt } from "@/components/game/DogOption";
 import { HumanFace } from "@/components/game/HumanFace";
 import { Leaderboard } from "@/components/game/Leaderboard";
@@ -18,7 +18,7 @@ import {
   type SoloMatchResult,
   type SoloResult,
 } from "@/lib/gameApi";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 
 export default Game;
 
@@ -41,15 +41,13 @@ function Game() {
 
   return (
     <AppShell>
-      <RequireAuth>
-        {chosen === null ? (
-          <GamePicker onPick={setChosen} />
-        ) : chosen === "match" ? (
-          <MixAndMatch onBack={back} />
-        ) : (
-          <StreakSurvival onBack={back} />
-        )}
-      </RequireAuth>
+      {chosen === null ? (
+        <GamePicker onPick={setChosen} />
+      ) : chosen === "match" ? (
+        <MixAndMatch onBack={back} />
+      ) : (
+        <StreakSurvival onBack={back} />
+      )}
     </AppShell>
   );
 }
@@ -111,8 +109,8 @@ type Stats = { lives: number; score: number; streak: number; longestStreak: numb
 const NO_STATS: Stats = { lives: 3, score: 0, streak: 0, longestStreak: 0 };
 
 function StreakSurvival({ onBack }: { onBack: () => void }) {
-  const { state } = useStore();
-  const me = state.user!;
+  const { user } = useAuth();
+  const me = user!;
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [runToken, setRunToken] = useState<string | null>(null);
@@ -140,7 +138,7 @@ function StreakSurvival({ onBack }: { onBack: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const run = await gameApi.soloStart(me.id, me.username);
+      const run = await gameApi.soloStart();
       setRunToken(run.runToken);
       setQuestion(run.question);
       setStats({
@@ -157,7 +155,7 @@ function StreakSurvival({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [me.id, me.username]);
+  }, []);
 
   const pick = useCallback(
     async (choice: number) => {
@@ -213,7 +211,7 @@ function StreakSurvival({ onBack }: { onBack: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, question, reveal, pick]);
 
-  const myBest = board.find((e) => e.playerId === me.id);
+  const myBest = board.find((e) => e.playerId === String(me.id));
 
   return (
     <div className="grid lg:grid-cols-[1fr_20rem] gap-6 items-start">
@@ -346,7 +344,7 @@ function StreakSurvival({ onBack }: { onBack: () => void }) {
       <Leaderboard
         entries={board}
         board="solo"
-        meId={me.id}
+        meId={String(me.id)}
         title="🏅 Best runs"
         empty="No runs yet. Yours could be first."
       />
@@ -363,8 +361,8 @@ function StreakSurvival({ onBack }: { onBack: () => void }) {
  * tiles until one lights up.
  */
 function MixAndMatch({ onBack }: { onBack: () => void }) {
-  const { state } = useStore();
-  const me = state.user!;
+  const { user } = useAuth();
+  const me = user!;
 
   const [phase, setPhase] = useState<Phase>("idle");
   const [runToken, setRunToken] = useState<string | null>(null);
@@ -393,7 +391,7 @@ function MixAndMatch({ onBack }: { onBack: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      const run = await gameApi.soloMatchStart(me.id, me.username);
+      const run = await gameApi.soloMatchStart();
       setRunToken(run.runToken);
       setBoard(run.board);
       setPairs({});
@@ -411,7 +409,7 @@ function MixAndMatch({ onBack }: { onBack: () => void }) {
     } finally {
       setBusy(false);
     }
-  }, [me.id, me.username]);
+  }, []);
 
   // A human takes one dog and a dog takes one human, so a new pairing displaces
   // whatever it collides with — the local echo of the room's exclusive claims.
@@ -487,7 +485,7 @@ function MixAndMatch({ onBack }: { onBack: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, answer, submit]);
 
-  const myBest = table.find((e) => e.playerId === me.id);
+  const myBest = table.find((e) => e.playerId === String(me.id));
   const paired = Object.keys(pairs).length;
   const rightThisBoard = answer
     ? Object.entries(pairs).filter(([human, dog]) => answer[human] === dog).length
@@ -536,10 +534,10 @@ function MixAndMatch({ onBack }: { onBack: () => void }) {
                 claims={Object.entries(pairs).map(([human, dog]) => ({
                   human: Number(human),
                   dog,
-                  playerId: me.id,
+                  playerId: String(me.id),
                   name: me.username,
                 }))}
-                meId={me.id}
+                meId={String(me.id)}
                 answer={answer}
                 disabled={!!answer || busy}
                 onClaim={claim}
@@ -619,7 +617,7 @@ function MixAndMatch({ onBack }: { onBack: () => void }) {
       <Leaderboard
         entries={table}
         board="solo_match"
-        meId={me.id}
+        meId={String(me.id)}
         title="🏅 Most pairs"
         empty="No runs yet. Yours could be first."
       />
