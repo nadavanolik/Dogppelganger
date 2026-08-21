@@ -5,6 +5,7 @@ import { useSocketEvent } from "@/lib/appSocket";
 import { useAuth } from "@/lib/auth";
 import { dmApi } from "@/lib/dmApi";
 import { notificationApi, type Notification } from "@/lib/galleryApi";
+import { LogoBadge } from "@/components/LogoBadge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -79,11 +80,9 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-40 border-b-2 border-[var(--ink)] bg-background/90 backdrop-blur">
         <div className="mx-auto max-w-7xl px-4 py-3 flex items-center gap-3">
           <Link to="/" className="flex items-center gap-2 shrink-0">
-            <div className="h-10 w-10 rounded-full bg-primary border-2 border-[var(--ink)] flex items-center justify-center text-xl shadow-pop-sm">
-              🐶
-            </div>
+            <LogoBadge />
             <span className="font-display text-2xl font-black tracking-tight hidden sm:inline">
-              dogppleganger
+              dogppelganger
             </span>
           </Link>
 
@@ -246,7 +245,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </header>
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8">{children}</main>
       <footer className="border-t-2 border-[var(--ink)] py-6 text-center text-sm text-muted-foreground">
-        Made with 🐾 · dogppleganger prototype
+        Made with 🐾 · dogppelganger prototype
       </footer>
     </div>
   );

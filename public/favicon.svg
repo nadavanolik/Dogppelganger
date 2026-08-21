@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>dogppelganger</title>
+  <circle cx="32.0" cy="32.0" r="30.4"
+          fill="#ff6f4a" stroke="#1d0d07" stroke-width="3.2" />
+  <text x="32.0" y="32.0" font-size="38"
+        text-anchor="middle" dominant-baseline="central"
+        font-family="'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
+  >🐶</text>
+</svg>
