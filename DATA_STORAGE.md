@@ -105,15 +105,33 @@ dogdata volume
 
 appdata volume  (/app/data)
 ├── game/                         existing leaderboard snapshots — untouched
-└── uploads/0000/                 sharded by job_id // 1000
-    ├── 17-orig.jpg               re-encoded original, ≤ 1024 px
-    ├── 17-display.webp           512 px
-    └── 17-thumb.webp             256 px
+├── uploads/0000/                 sharded by job_id // 1000
+│   ├── 17-orig.jpg               re-encoded original, ≤ 1024 px
+│   ├── 17-display.webp           512 px
+│   └── 17-thumb.webp             256 px
+└── attachments/0000/             sharded by message_id // 1000
+    ├── 42-display.webp           512 px — images only
+    ├── 42-thumb.webp             256 px — images only
+    └── 43-orig.mp4               video, exactly as received
 ```
 
-Uploads are sharded because a single directory holding tens of thousands of
-entries degrades on ext4. `job_id // 1000` keeps ~3,000 files per directory and,
-unlike hashing the owner id, puts nothing user-identifying in a path.
+Uploads and attachments are sharded because a single directory holding tens of
+thousands of entries degrades on ext4. `id // 1000` keeps ~3,000 files per
+directory and, unlike hashing the owner id, puts nothing user-identifying in a
+path.
+
+An image attachment has **no `orig`**: nothing runs a model over a chat photo,
+so keeping a full-resolution copy would be pure disk cost. A video has no
+derivatives, because generating one would mean decoding it (see §6).
+
+In both cases the path is a pure function of the row id and content type — there
+is deliberately no path column, so the database and the disk cannot disagree.
+
+**Disk pressure to watch.** Attachments share the volume with uploads and the
+leaderboard snapshot. Two hundred clips at the 25 MB cap is 5 GB, and a full
+disk takes Postgres down with it, not just attachments. `docker system df -v`
+before a demo. A per-user quota is the obvious next control and is deliberately
+not built yet.
 
 Total for the dog corpus: **~226 MB** at 512 px + ~79 MB WebP + ~25 MB thumbs
 ≈ **330 MB**. It is seeded once and then survives deploys exactly like `dbdata`
@@ -176,6 +194,87 @@ header's claim.
 > is a follow-up, not part of this change — `/api/match` is a live endpoint and
 > collapsing the two tables is a call for the whole team, not for me alone.
 
+### 4.3b `users`, and who owns what
+
+Previously undocumented, and previously not really true: a `users` table existed
+with bcrypt-hashed passwords, but **nothing referenced it**. Ownership was a
+`VARCHAR(64)` the browser made up and the server believed. It is now a real
+foreign key everywhere.
+
+```
+users(id, email UQ, username UQ, password, token_version, created_at, updated_at)
+```
+
+`token_version` is what makes changing your password mean something: every token
+carries the value it was minted with, and one that disagrees with the row is
+rejected. Without it a token stolen an hour ago outlives the password it was
+issued against for a full day.
+
+The foreign keys split into two groups, and the split *is* the deletion policy:
+
+| Cascades — dies with the account | Nullable, SET NULL — survives as `[deleted user]` |
+|---|---|
+| `upload_jobs.owner_id` | `posts.author_id` |
+| `matches.user_id` | `comments.author_id` |
+| `reactions.user_id` | `messages.sender_id` |
+| `notifications.user_id` | `conversations.user_a_id` / `user_b_id` |
+
+The rule: a row that is *about* the person dies with them; a row *addressed to
+other people* survives without them, because a thread other people replied to
+stops making sense with holes in it. A reaction cascades rather than
+anonymising for a second reason — a NULL there would defeat
+`uq_reaction_target_user`, since NULLs don't collide, letting one ghost
+accumulate unlimited likes on a post.
+
+`posts.image_job_id` is `SET NULL` too, so an anonymised post keeps its words
+and loses its picture. That falls out of the rules above and happens to be
+exactly right.
+
+⚠️ **The cascades are a safety net, not the mechanism.** SQLite does not enforce
+`ondelete` unless `PRAGMA foreign_keys=ON`, which this project never issues — so
+they fire in production Postgres and silently don't under pytest. Deletion is
+therefore written out step by step in `backend/app/services/users.py`, so the
+tests exercise the path production takes.
+
+### 4.3c `conversations` and `messages` — direct messages
+
+Two tables, not one. A single `messages(sender_id, recipient_id, …)` table where
+"the conversation" is the unordered pair looks simpler until the inbox query,
+which needs the latest message per pair: that means `LEAST`/`GREATEST` on
+Postgres and `MIN`/`MAX` on SQLite — different function names, in the one query
+that must be right, across exactly the split this project runs.
+
+```
+conversations(id, user_a_id, user_b_id, created_at, last_message_at)
+    UNIQUE(user_a_id, user_b_id)   CHECK(user_a_id < user_b_id)
+messages(id, conversation_id, sender_id, body, created_at, read_at,
+         attachment_kind, attachment_content_type, attachment_byte_size,
+         attachment_width, attachment_height, attachment_name)
+    CHECK(body IS NOT NULL OR attachment_kind IS NOT NULL)
+```
+
+`user_a_id < user_b_id` is the invariant that makes the unique constraint mean
+"one thread per pair" rather than "one per direction" — without it, A messaging
+B and B messaging A build two half-conversations.
+
+History is ordered and paged by **`id`, never `created_at`**: two messages
+written in the same tick share a timestamp, and an ordering that can tie is an
+ordering that can drop a message off the end of a page. The cursor is
+`?before=<id>`.
+
+`read_at` is per message rather than a high-water mark on the conversation: one
+nullable column instead of two, correct when the same person has two tabs open,
+and the inbox's unread counts come out of one grouped query.
+
+The attachment lives in columns rather than its own table because a message
+carries at most one, so a 1:1 table whose rows are always created and destroyed
+with their parent would be a join pretending to be a decision.
+
+**Offline delivery needs no mechanism**, and that is worth writing down because
+it is easy to over-engineer: a message is a row before it is ever a frame. If
+the recipient has no socket the push finds nothing and does nothing, and the
+message is waiting in their inbox with an unread badge next time they look.
+
 ### 4.4 Migrating an existing database
 
 `main.py` calls `Base.metadata.create_all()`, which creates **missing tables and
@@ -196,6 +295,26 @@ the plan.
 It is deliberately not Alembic — one schema change across two tables does not
 justify a migration framework with a version history. If the schema starts
 moving regularly, switch to Alembic rather than growing that script.
+
+⚠️ **The real-users change could not use it.** Turning `owner_id` from
+`VARCHAR(64)` holding `"u_moodyoak"` into `INTEGER REFERENCES users(id)` needs an
+`ALTER … TYPE … USING`, and there is no `USING` expression that turns a
+browser-invented label into a user id. That is why the change ships with a
+one-time destructive reset instead:
+
+```
+ALLOW_DB_RESET=1 python scripts/reset_db.py --yes
+```
+
+It requires both the flag and the environment variable, prints what it is about
+to destroy, and **never touches the dog corpus** — re-ingesting 226 MB is not
+something to do by accident. It is deliberately not wired into `deploy.yml`: a
+destructive step must not run on every push. Run it once, by hand, between
+`docker compose pull` and `up -d`. (`docker compose down -v` is the wrong tool —
+it would take `dogdata` with it.)
+
+The schema now moves regularly, so **Alembic is the next step**, with the
+post-reset schema as its baseline revision.
 
 ---
 
@@ -264,15 +383,53 @@ is a follow-up, because it touches the game engine and its tests.
 | Uploads per request | 20 | new |
 | Accepted types | PNG, JPEG — **by magic bytes**, not the declared header | pre-existing |
 | Decode size | 50 MP | `storage/imaging.py` |
-| Forum image / video | 5 MB / 25 MB | phase 3, documented not built |
+| DM attachment: image | 10 MB, JPEG/PNG/WebP | `dm/attachments.py` |
+| DM attachment: video | 25 MB, MP4/WebM | `dm/attachments.py` |
+| Request body (nginx) | 30 MB | `nginx.conf` — see below |
+
+⚠️ **nginx used to cap request bodies at its 1 MB default**, so every photo over
+1 MB was rejected with a 413 in production *before* FastAPI's own 10 MB limit
+was consulted. `client_max_body_size 30m` in the `location /api/` block is what
+makes both the upload cap and video attachments real.
 
 Every uploaded image is **re-encoded**, never stored as received. That is what
 strips EXIF (including GPS), applies the orientation tag so photos aren't
 sideways, and destroys any payload smuggled in a metadata segment. The bytes on
-disk are bytes Pillow wrote.
+disk are bytes Pillow wrote. The same is true of image attachments in DMs.
+
+**Video is the exception, and it is worth being honest about.** There is no
+decoder — shipping ffmpeg to transcode or even to probe would add 100 MB+ to an
+image that already carries a 350 MB ONNX encoder, and minutes of CPU per clip on
+a 1 GB VM. So a video is stored byte-for-byte, and the defences are arranged
+around that: the container is identified from its own magic bytes; the extension
+on disk and the `Content-Type` in the response both come from our allowlist;
+responses carry `X-Content-Type-Options: nosniff`; the size cap is enforced
+*while streaming*, not after buffering; and nginx never serves the directory, so
+every read goes through the participant check. The residual risk is a
+well-formed file no browser can play — a disappointment, not a hazard.
+
+One consequence of no transcoding: **there is no server-generated poster frame.**
+The UI appends `#t=0.1` to the video URL so the browser paints the first frame
+itself, and the inbox preview shows "🎬 Video" rather than loading 25 MB to draw
+a 40 px thumbnail.
 
 **Retention:** an upload's files live exactly as long as its job row; deleting a
-job deletes its derivatives. Default unless someone says otherwise.
+job deletes its derivatives. Attachments follow the same rule against their
+message row. Deleting an account erases every photo and attachment it owns —
+including attachments it *sent* to other people, because a picture of the
+sender's face is their personal data wherever it now sits.
+
+**Access.** A user photo is returned if the match is **shared to the gallery**
+(no authentication — sharing is an explicit, reversible publication by the
+owner), **or** the requester owns it, **or** it backs a forum post and the
+requester is logged in. Everything else is a 404. Since the check re-runs
+against the row on every request and responses are `no-store`, unsharing takes
+effect immediately rather than whenever a cache expires.
+
+Because an `<img>` or `<video>` element cannot send an `Authorization` header, a
+private read carries a short-lived, `scope: "media"` token in the query string
+instead. The two token kinds refuse each other, so one leaking into an access
+log is not a session handover.
 
 ---
 

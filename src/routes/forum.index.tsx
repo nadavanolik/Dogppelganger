@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
-import { useStore } from "@/lib/store";
+
+import { useAuth } from "@/lib/auth";
 import { forumApi, type ForumPost } from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
 import { MatchPair } from "@/components/MatchPair";
@@ -9,15 +10,14 @@ import { MatchPair } from "@/components/MatchPair";
 export default ForumList;
 
 function ForumList() {
-  const { state } = useStore();
-  const owner = state.user ?? state.users[0];
+  const { user: me } = useAuth();
   const [posts, setPosts] = useState<ForumPost[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     forumApi
-      .list(owner.id)
+      .list()
       .then((rows) => {
         if (!cancelled) setPosts(rows);
       })
@@ -28,10 +28,19 @@ function ForumList() {
     return () => {
       cancelled = true;
     };
-  }, [owner.id]);
+  }, []);
+
+  async function remove(post: ForumPost) {
+    const warning = post.image
+      ? "Delete this post? Its comments go too. Your photo stays on your profile."
+      : "Delete this post? Its comments go too.";
+    if (!window.confirm(warning)) return;
+    await forumApi.removePost(post.id);
+    setPosts((prev) => prev.filter((p) => p.id !== post.id));
+  }
 
   async function react(post: ForumPost, kind: "like" | "dislike") {
-    const summary = await forumApi.react(owner.id, "post", post.id, kind);
+    const summary = await forumApi.react("post", post.id, kind);
     setPosts((prev) => prev.map((p) => (p.id === post.id ? { ...p, ...summary } : p)));
   }
 
@@ -67,7 +76,7 @@ function ForumList() {
             {p.image && (
               <div className="mt-3">
                 <MatchPair
-                  humanSrc={uploadImageUrl(p.authorId, p.image.jobId)}
+                  humanSrc={uploadImageUrl(p.image.jobId)}
                   dog={p.image.dog}
                   score={p.image.score}
                   sharedTraits={p.image.sharedTraits}
@@ -93,6 +102,14 @@ function ForumList() {
               >
                 💬 {p.commentCount}
               </Link>
+              {p.authorId === me?.id && (
+                <button
+                  onClick={() => remove(p)}
+                  className="btn-pop btn-pop-hover bg-card px-3 py-1 text-sm ml-auto text-destructive"
+                >
+                  🗑 Delete
+                </button>
+              )}
             </div>
           </article>
         ))}

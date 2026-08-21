@@ -2,9 +2,11 @@
  * REST client for `/api/uploads` — upload a batch of photos and track their
  * place in the queue. See backend/app/uploads for how jobs are processed.
  *
- * Identity here is the same seam as gameApi/gameSocket: an `ownerId` string
- * from the local-only mock auth, not a real login token.
+ * Every call is authenticated by the shared helper in `api.ts`; the photo
+ * belongs to whoever the token says is calling.
  */
+
+import { api, withMediaToken } from "./api";
 
 const BASE = "/api/uploads";
 
@@ -52,6 +54,9 @@ export type UploadJob = {
   dogIndex: number | null;
   /** Similarity, 0..1. Not a classifier's confidence. */
   score: number | null;
+  /** Published to the public gallery. Private is the default. */
+  shared: boolean;
+  sharedAt: string | null;
   sharedTraits: SharedTrait[];
   error: string | null;
   createdAt: string | null;
@@ -65,67 +70,55 @@ export type UploadResponse = {
   rejected: Rejected[];
 };
 
-export class UploadApiError extends Error {}
-
 /**
  * The uploaded human photo. Unlike dog photos, this goes through the API
- * rather than nginx: it's personal data, so every read is ownership-checked
- * and marked no-store.
+ * rather than nginx: it's personal data, so every read is access-checked and
+ * marked no-store.
+ *
+ * An `<img>` element cannot send an Authorization header, so a short-lived
+ * media token rides in the query string instead. Pass `signed: false` for a
+ * photo shared to the public gallery — that one is readable by anyone, and
+ * leaving the token off keeps the URL stable and cacheable.
  */
 export function uploadImageUrl(
-  ownerId: string,
   jobId: number,
   size: "display" | "thumb" = "display",
+  signed = true,
 ): string {
-  return `${BASE}/${jobId}/image?ownerId=${encodeURIComponent(ownerId)}&size=${size}`;
-}
-
-async function handle<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    const detail = body?.detail;
-    throw new UploadApiError(
-      typeof detail === "string" ? detail : `Request failed (${res.status}).`,
-    );
-  }
-  return res.json() as Promise<T>;
+  const url = `${BASE}/${jobId}/image?size=${size}`;
+  return signed ? withMediaToken(url) : url;
 }
 
 export const uploadApi = {
   /** Send a batch at once; `urgent` is positional, one flag per file. */
-  async upload(ownerId: string, items: { file: File; urgent: boolean }[]): Promise<UploadResponse> {
+  upload(items: { file: File; urgent: boolean }[]): Promise<UploadResponse> {
     const form = new FormData();
-    form.append("ownerId", ownerId);
     form.append("urgent", JSON.stringify(items.map((i) => i.urgent)));
     for (const { file } of items) form.append("files", file);
-
-    let res: Response;
-    try {
-      res = await fetch(BASE, { method: "POST", body: form });
-    } catch {
-      throw new UploadApiError("Can't reach the server. Is the backend running?");
-    }
-    return handle<UploadResponse>(res);
+    return api.form<UploadResponse>(BASE, form);
   },
 
   /** One job — what the result page polls/subscribes for. */
-  async get(ownerId: string, jobId: number): Promise<UploadJob> {
-    let res: Response;
-    try {
-      res = await fetch(`${BASE}/${jobId}?ownerId=${encodeURIComponent(ownerId)}`);
-    } catch {
-      throw new UploadApiError("Can't reach the server. Is the backend running?");
-    }
-    return handle<UploadJob>(res);
+  get(jobId: number): Promise<UploadJob> {
+    return api.get<UploadJob>(`${BASE}/${jobId}`);
   },
 
-  async list(ownerId: string): Promise<UploadJob[]> {
-    let res: Response;
-    try {
-      res = await fetch(`${BASE}?ownerId=${encodeURIComponent(ownerId)}`);
-    } catch {
-      throw new UploadApiError("Can't reach the server. Is the backend running?");
-    }
-    return handle<UploadJob[]>(res);
+  list(): Promise<UploadJob[]> {
+    return api.get<UploadJob[]>(BASE);
+  },
+
+  /** Publish a finished match to the public gallery. */
+  share(jobId: number): Promise<UploadJob> {
+    return api.post<UploadJob>(`${BASE}/${jobId}/share`);
+  },
+
+  /** Take it back out. Private again on the very next request. */
+  unshare(jobId: number): Promise<UploadJob> {
+    return api.del<UploadJob>(`${BASE}/${jobId}/share`);
+  },
+
+  /** Delete the photo, its derivatives, and any post that shared it. */
+  remove(jobId: number): Promise<void> {
+    return api.del<void>(`${BASE}/${jobId}`);
   },
 };

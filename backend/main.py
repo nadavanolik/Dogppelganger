@@ -12,16 +12,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.config import settings
 from app.database import Base, engine
 from app import models  # noqa: F401  (import so tables register on Base)
 from app.forum import router as forum_router
 from app.forum.seed import seed_if_empty
 from app.game import router as game_router
-from app.routers import auth, dogs, views, ws
+from app.dm import router as dm_router
+from app.routers import auth, dogs, gallery, notifications, users, views, ws
 from app.storage import layout
 from app.uploads import router as uploads_router
 from app.uploads import queue as upload_queue
-from app.uploads.ws import notifier as upload_notifier
+
+# Fail loudly at import rather than serving forgeable tokens all week.
+settings.check_production_secrets()
 
 # Create tables on startup (fine for a project; use migrations later if needed).
 Base.metadata.create_all(bind=engine)
@@ -30,7 +34,7 @@ seed_if_empty()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    upload_queue.start_workers(upload_notifier.send)
+    upload_queue.start_workers(ws.manager.send_to_user)
     yield
     await upload_queue.stop_workers()
 
@@ -64,6 +68,10 @@ app.include_router(game_router)
 app.include_router(uploads_router)
 app.include_router(forum_router)
 app.include_router(dogs.router)
+app.include_router(gallery.router)
+app.include_router(users.router)
+app.include_router(notifications.router)
+app.include_router(dm_router)
 
 # Dog photos in local development only. In production nginx owns /dogs/ and
 # serves it off the read-only `dogdata` mount — requests never reach here (it

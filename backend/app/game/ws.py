@@ -5,11 +5,16 @@ backbone for DMs and notifications and is still being built, and the game has no
 business editing it. ProjectPlan 2.x wants a single socket per client in the end,
 and ``hub.py`` documents the two-line merge that gets there.
 
-**Identity.** Ideally every player is a logged-in user, and this endpoint prefers
-that: given ``?token=<jwt>`` it uses the real user id. But the frontend's auth is
-still local-only, so it also accepts ``?playerId=&name=``, which is enough to run
-a real room with real people today. When login issues real tokens, delete
-``_identify``'s fallback branch — nothing else changes.
+**Identity.** Every player is a logged-in user. Connect with ``?token=<jwt>``
+and nothing else; an absent, malformed or stale token closes the socket. The
+``?playerId=&name=`` fallback that used to live here — where the server took the
+browser's word for who was playing — is gone, which is what the note in this
+docstring used to promise would happen "when login issues real tokens".
+
+The token goes in the query string because a browser cannot set headers on a
+WebSocket handshake. It is the short-lived media-scoped token rather than the
+24-hour session token, so what ends up in nginx's access log expires in minutes
+and cannot be replayed against the REST API.
 """
 from __future__ import annotations
 
@@ -17,7 +22,9 @@ import logging
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
-from ..security import decode_token
+from ..database import SessionLocal
+from ..models import User
+from ..security import decode_media_token, decode_token_claims
 from .hub import Player, hub
 
 log = logging.getLogger(__name__)
@@ -61,30 +68,35 @@ registry = SocketRegistry()
 hub.bind(registry.send)
 
 
-def _identify(token: str, player_id: str, name: str) -> Player | None:
-    """Work out who is connecting, preferring a real JWT when there is one."""
-    if token:
-        user_id = decode_token(token)
-        if user_id is not None:
-            return Player(id=f"u{user_id}", name=(name or f"user{user_id}")[:MAX_NAME])
-        return None  # a token was offered and it was bad — don't quietly downgrade
+def player_for_token(token: str) -> Player | None:
+    """The logged-in user behind a token, as the game's Player value.
 
-    # TEMPORARY: the frontend's login is local-only, so trust the ids it makes.
-    # Delete this branch once /api/auth issues tokens the SPA actually holds.
-    player_id = player_id.strip()[:64]
-    if not player_id:
+    Accepts either token kind so the SPA can reuse whichever it has to hand.
+    The player id is ``str(user.id)`` — one canonical mapping, so the frontend
+    can compare against ``String(me.id)`` without knowing a prefix convention.
+    (It used to be ``f"u{user_id}"``, which meant every comparison site had to
+    know about the "u".)
+
+    A plain `SessionLocal()` rather than the `get_db` dependency: FastAPI does
+    not run request-scoped dependencies for a WebSocket handshake the way it
+    does for a request, and the name has to come from the database.
+    """
+    if not token:
         return None
-    return Player(id=player_id, name=(name.strip() or "anon")[:MAX_NAME])
+    claims = decode_token_claims(token) or decode_media_token(token)
+    if claims is None:
+        return None
+    user_id, token_version = claims
+    with SessionLocal() as db:
+        user = db.get(User, user_id)
+        if user is None or user.token_version != token_version:
+            return None
+        return Player(id=str(user.id), name=user.username[:MAX_NAME])
 
 
 @router.websocket("/api/game/ws")
-async def game_socket(
-    ws: WebSocket,
-    token: str = Query(default=""),
-    playerId: str = Query(default=""),
-    name: str = Query(default=""),
-):
-    player = _identify(token, playerId, name)
+async def game_socket(ws: WebSocket, token: str = Query(default="")):
+    player = player_for_token(token)
     if player is None:
         await ws.close(code=1008)  # policy violation
         return

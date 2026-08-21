@@ -6,6 +6,12 @@
  * `gameSocket.ts` instead.
  */
 
+import { api } from "./api";
+
+// One error type for the whole app now — re-exported so existing call sites
+// keep working. See src/lib/api.ts.
+export { ApiError } from "./api";
+
 const BASE = "/api/game";
 
 /** Spot the Double (one human, N dogs) or Mix & Match (four of each). */
@@ -142,63 +148,31 @@ export type RoomState = {
   leaderboard?: LeaderEntry[];
 };
 
-export class ApiError extends Error {}
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      ...init,
-      headers: init?.body ? { "Content-Type": "application/json" } : undefined,
-    });
-  } catch {
-    throw new ApiError("Can't reach the server. Is the backend running?");
-  }
-  if (!res.ok) {
-    // FastAPI puts the human-readable reason in `detail`.
-    const body = await res.json().catch(() => null);
-    const detail = body?.detail;
-    throw new ApiError(typeof detail === "string" ? detail : `Request failed (${res.status}).`);
-  }
-  return res.json() as Promise<T>;
-}
-
 export const gameApi = {
-  listRooms: () => request<{ rooms: RoomSummary[]; options: RoomOptions }>("/rooms"),
+  listRooms: () => api.get<{ rooms: RoomSummary[]; options: RoomOptions }>(`${BASE}/rooms`),
 
   /** `gameType` is optional: the host normally picks it in the room instead. */
-  createRoom: (playerId: string, playerName: string, name: string, gameType?: GameType) =>
-    request<RoomSummary>("/rooms", {
-      method: "POST",
-      body: JSON.stringify({ playerId, playerName, name, ...(gameType ? { gameType } : {}) }),
-    }),
+  createRoom: (name: string, gameType?: GameType) =>
+    api.post<RoomSummary>(`${BASE}/rooms`, { name, ...(gameType ? { gameType } : {}) }),
 
-  roomByCode: (code: string) => request<RoomSummary>(`/rooms/by-code/${encodeURIComponent(code)}`),
+  roomByCode: (code: string) =>
+    api.get<RoomSummary>(`${BASE}/rooms/by-code/${encodeURIComponent(code)}`),
 
-  soloStart: (playerId: string, playerName: string) =>
-    request<SoloState>("/solo/start", {
-      method: "POST",
-      body: JSON.stringify({ playerId, playerName }),
-    }),
+  // No player argument on any of these any more: a run belongs to whoever
+  // started it, and the server checks that the token submitting an answer is
+  // the one that started the run.
+  soloStart: () => api.post<SoloState>(`${BASE}/solo/start`),
 
   soloAnswer: (runToken: string, choice: number) =>
-    request<SoloResult>("/solo/answer", {
-      method: "POST",
-      body: JSON.stringify({ runToken, choice }),
-    }),
+    api.post<SoloResult>(`${BASE}/solo/answer`, { runToken, choice }),
 
-  soloMatchStart: (playerId: string, playerName: string) =>
-    request<SoloMatchState>("/solo/match/start", {
-      method: "POST",
-      body: JSON.stringify({ playerId, playerName }),
-    }),
+  soloMatchStart: () => api.post<SoloMatchState>(`${BASE}/solo/match/start`),
 
   soloMatchSubmit: (runToken: string, pairs: PairMap) =>
-    request<SoloMatchResult>("/solo/match/submit", {
-      method: "POST",
-      body: JSON.stringify({ runToken, pairs }),
-    }),
+    api.post<SoloMatchResult>(`${BASE}/solo/match/submit`, { runToken, pairs }),
 
   leaderboard: (board: BoardName, limit = 20) =>
-    request<{ board: string; entries: LeaderEntry[] }>(`/leaderboard/${board}?limit=${limit}`),
+    api.get<{ board: string; entries: LeaderEntry[] }>(
+      `${BASE}/leaderboard/${board}?limit=${limit}`,
+    ),
 };

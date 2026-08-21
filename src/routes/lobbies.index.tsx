@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-import { AppShell, RequireAuth } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { Leaderboard } from "@/components/game/Leaderboard";
 import { ApiError, gameApi, type LeaderEntry, type RoomSummary } from "@/lib/gameApi";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 
 export default Lobbies;
 
@@ -18,16 +18,14 @@ const BOARD_PREVIEW = 3;
 function Lobbies() {
   return (
     <AppShell>
-      <RequireAuth>
-        <Inner />
-      </RequireAuth>
+      <Inner />
     </AppShell>
   );
 }
 
 function Inner() {
-  const { state } = useStore();
-  const me = state.user!;
+  const { user } = useAuth();
+  const me = user!;
   const navigate = useNavigate();
 
   const [rooms, setRooms] = useState<RoomSummary[] | null>(null);
@@ -76,7 +74,7 @@ function Inner() {
     try {
       // No game type here on purpose: the host picks it inside the room, where
       // the rounds and the clock are set too.
-      const room = await gameApi.createRoom(me.id, me.username, name.trim());
+      const room = await gameApi.createRoom(name.trim());
       navigate(`/lobbies/${room.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Couldn't create a room.");
@@ -219,7 +217,7 @@ function Inner() {
         <Leaderboard
           entries={matchBoard}
           board="multiplayer_match"
-          meId={me.id}
+          meId={String(me.id)}
           title="🔗 Mix & match"
           collapsedTo={BOARD_PREVIEW}
           empty="No games finished yet."
@@ -227,7 +225,7 @@ function Inner() {
         <Leaderboard
           entries={doubleBoard}
           board="multiplayer"
-          meId={me.id}
+          meId={String(me.id)}
           title="🎯 Spot the double"
           collapsedTo={BOARD_PREVIEW}
           empty="No games finished yet."

@@ -1,6 +1,10 @@
 import { Link, NavLink as RouterNavLink, useNavigate } from "react-router-dom";
-import { useState, type ReactNode } from "react";
-import { useStore } from "@/lib/store";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+
+import { useSocketEvent } from "@/lib/appSocket";
+import { useAuth } from "@/lib/auth";
+import { dmApi } from "@/lib/dmApi";
+import { notificationApi, type Notification } from "@/lib/galleryApi";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,14 +15,64 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { state, logout, markAllRead } = useStore();
+  const { user: me, logout } = useAuth();
   const navigate = useNavigate();
   const [openNotif, setOpenNotif] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
-  const me = state.user;
-  const myNotifs = me ? state.notifications.filter((n) => n.userId === me.id) : [];
-  const unread = myNotifs.filter((n) => !n.read).length;
-  const unreadDMs = myNotifs.filter((n) => n.kind === "dm" && !n.read).length;
+
+  // Two independent badges, because there are two independent things to count.
+  // The bell reads the notifications table; the envelope reads unread DMs.
+  // Writing a notification row per chat message would double the write volume
+  // and give unread two competing sources of truth.
+  const [notifs, setNotifs] = useState<Notification[]>([]);
+  const [unread, setUnread] = useState(0);
+  const [unreadDMs, setUnreadDMs] = useState(0);
+
+  const loadNotifs = useCallback(() => {
+    if (!me) return;
+    notificationApi
+      .list()
+      .then((res) => {
+        setNotifs(res.items);
+        setUnread(res.unread);
+      })
+      .catch(() => {
+        /* the bell is not worth an error banner */
+      });
+  }, [me]);
+
+  const loadDmCount = useCallback(() => {
+    if (!me) return;
+    dmApi
+      .conversations()
+      .then((rows) => setUnreadDMs(rows.reduce((sum, c) => sum + c.unreadCount, 0)))
+      .catch(() => {});
+  }, [me]);
+
+  useEffect(() => {
+    if (!me) {
+      setNotifs([]);
+      setUnread(0);
+      setUnreadDMs(0);
+      return;
+    }
+    loadNotifs();
+    loadDmCount();
+  }, [me, loadNotifs, loadDmCount]);
+
+  // Live, on the one app-wide socket — the badge moves without a refresh.
+  useSocketEvent("notification", loadNotifs);
+  useSocketEvent("dm_received", loadDmCount);
+  useSocketEvent("dm_read", loadDmCount);
+
+  const markAllRead = useCallback(() => {
+    notificationApi
+      .markAllRead()
+      .then(() => setUnread(0))
+      .catch(() => {});
+  }, []);
+
+  const myNotifs = notifs;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -126,6 +180,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                     <DropdownMenuItem onClick={() => navigate("/profile")}>
                       🐕 My profile & dogs
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => navigate("/settings")}>
+                      ⚙️ Account settings
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => {
@@ -210,27 +267,8 @@ function NavLink({ to, label }: { to: string; label: string }) {
   );
 }
 
-export function RequireAuth({ children }: { children: ReactNode }) {
-  const { state } = useStore();
-  if (!state.user) {
-    return (
-      <div className="card-pop max-w-md mx-auto p-8 text-center">
-        <div className="text-5xl mb-2">🐕‍🦺</div>
-        <h2 className="font-display text-2xl font-bold">Only signed-in dogs beyond this point</h2>
-        <p className="text-muted-foreground mt-1">Log in or make an account to continue.</p>
-        <div className="mt-4 flex gap-2 justify-center">
-          <Link to="/login" className="btn-pop btn-pop-hover bg-card px-4 py-2">
-            Log in
-          </Link>
-          <Link
-            to="/signup"
-            className="btn-pop btn-pop-hover bg-primary text-primary-foreground px-4 py-2"
-          >
-            Sign up
-          </Link>
-        </div>
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
+// `RequireAuth` used to live here: an inline "please log in" card that three of
+// eighteen pages wrapped themselves in. It never redirected, never remembered
+// where you were headed, and — because the pages that *didn't* use it fell back
+// to acting as a seeded mock account — it wasn't really a guard at all. Access
+// is now decided once, at the router: see src/components/Guards.tsx.

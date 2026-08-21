@@ -10,6 +10,8 @@
  * the frontend has to change.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { useMediaToken } from "./useMediaToken";
 import type { RoomState } from "./gameApi";
 
 export type ServerEvent = { type: string; payload: Record<string, unknown> };
@@ -20,20 +22,24 @@ export type SocketStatus = "connecting" | "open" | "closed";
 const PING_INTERVAL = 25_000;
 const MAX_BACKOFF = 8_000;
 
-function socketUrl(playerId: string, playerName: string): string {
+/**
+ * The token goes in the query string because a browser cannot set headers on a
+ * WebSocket handshake. It is the short-lived media-scoped token, so what ends
+ * up in nginx's access log expires in minutes and is useless against the REST
+ * API — the server rejects a media token anywhere a session token belongs.
+ *
+ * The server derives the player id and display name from it; they are no longer
+ * something the client gets to assert.
+ */
+function socketUrl(token: string): string {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const params = new URLSearchParams({ playerId, name: playerName });
+  const params = new URLSearchParams({ token });
   return `${proto}//${window.location.host}/api/game/ws?${params}`;
 }
 
-export function useGameRoom(opts: {
-  playerId: string | null;
-  playerName: string;
-  roomId?: string;
-  code?: string;
-  enabled?: boolean;
-}) {
-  const { playerId, playerName, roomId, code, enabled = true } = opts;
+export function useGameRoom(opts: { roomId?: string; code?: string; enabled?: boolean }) {
+  const { roomId, code, enabled = true } = opts;
+  const token = useMediaToken();
 
   const [status, setStatus] = useState<SocketStatus>("connecting");
   const [state, setState] = useState<RoomState | null>(null);
@@ -51,7 +57,7 @@ export function useGameRoom(opts: {
   }, []);
 
   useEffect(() => {
-    if (!enabled || !playerId || (!roomId && !code)) return;
+    if (!enabled || !token || (!roomId && !code)) return;
 
     let cancelled = false;
     let attempt = 0;
@@ -62,7 +68,7 @@ export function useGameRoom(opts: {
     const connect = () => {
       if (cancelled) return;
       setStatus("connecting");
-      socket = new WebSocket(socketUrl(playerId, playerName));
+      socket = new WebSocket(socketUrl(token));
       socketRef.current = socket;
 
       socket.onopen = () => {
@@ -141,7 +147,7 @@ export function useGameRoom(opts: {
       socket?.close();
       socketRef.current = null;
     };
-  }, [enabled, playerId, playerName, roomId, code]);
+  }, [enabled, token, roomId, code]);
 
   return {
     status,

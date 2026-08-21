@@ -18,11 +18,33 @@ def read_until(ws, predicate, limit: int = 80):
     return None
 
 
+# Two real accounts. Players are logged-in users now — the server derives the
+# player id from the token instead of believing a `playerId` in the body — so
+# every test that used to invent "http_a" signs somebody in instead.
+
+
 @pytest.fixture
-def room(client):
+def player_a(user_factory):
+    return user_factory()
+
+
+@pytest.fixture
+def player_b(user_factory):
+    return user_factory()
+
+
+def socket_url(player, path: str = "/api/game/ws") -> str:
+    """A socket URL for a player. The token goes in the query string because a
+    browser cannot set headers on a WebSocket handshake."""
+    return f"{path}?token={player['token']}"
+
+
+@pytest.fixture
+def room(client, player_a):
     res = client.post(
         "/api/game/rooms",
-        json={"playerId": "http_a", "playerName": "ilona", "name": "Test room"},
+        json={"name": "Test room"},
+        headers=player_a["headers"],
     )
     assert res.status_code == 201
     return res.json()
@@ -32,15 +54,11 @@ def room(client):
 
 
 @pytest.fixture
-def match_room(client):
+def match_room(client, player_a):
     res = client.post(
         "/api/game/rooms",
-        json={
-            "playerId": "http_a",
-            "playerName": "ilona",
-            "name": "Match room",
-            "gameType": "match",
-        },
+        json={"name": "Match room", "gameType": "match"},
+        headers=player_a["headers"],
     )
     assert res.status_code == 201
     return res.json()
@@ -59,10 +77,11 @@ def test_a_match_room_is_created_with_its_own_defaults(match_room):
     assert match_room["roundsTotal"] == 5
 
 
-def test_an_unknown_game_type_is_refused(client):
+def test_an_unknown_game_type_is_refused(client, player_a):
     res = client.post(
         "/api/game/rooms",
-        json={"playerId": "http_a", "playerName": "ilona", "gameType": "kahoot"},
+        json={"gameType": "kahoot"},
+        headers=player_a["headers"],
     )
     assert res.status_code == 422
 
@@ -99,21 +118,23 @@ def test_missing_things_404(client, path):
     assert client.get(path).status_code == 404
 
 
-def test_a_room_needs_a_player_id(client):
-    res = client.post("/api/game/rooms", json={"playerId": "", "playerName": "x"})
+def test_creating_a_room_needs_a_login(client):
+    """Was 'a room needs a playerId'. There is no such field any more — the
+    player is whoever holds the token, so the failure mode is 401, not 422."""
+    res = client.post("/api/game/rooms", json={"name": "x"})
 
-    assert res.status_code == 422
+    assert res.status_code == 401
 
 
-def test_a_solo_run_can_be_played_over_rest(client):
-    run = client.post(
-        "/api/game/solo/start", json={"playerId": "http_s", "playerName": "nadav"}
-    ).json()
+def test_a_solo_run_can_be_played_over_rest(client, player_a):
+    run = client.post("/api/game/solo/start", headers=player_a["headers"]).json()
     assert run["question"] is not None and run["lives"] == 3
 
     choice = correct_choice(run["question"])
     result = client.post(
-        "/api/game/solo/answer", json={"runToken": run["runToken"], "choice": choice}
+        "/api/game/solo/answer",
+        json={"runToken": run["runToken"], "choice": choice},
+        headers=player_a["headers"],
     ).json()
 
     assert result["wasCorrect"] is True
@@ -121,23 +142,44 @@ def test_a_solo_run_can_be_played_over_rest(client):
     assert result["answerIndex"] == choice
 
 
-def test_a_bogus_run_token_is_a_404(client):
-    res = client.post("/api/game/solo/answer", json={"runToken": "xxx", "choice": 0})
+def test_a_bogus_run_token_is_a_404(client, player_a):
+    res = client.post(
+        "/api/game/solo/answer",
+        json={"runToken": "xxx", "choice": 0},
+        headers=player_a["headers"],
+    )
 
     assert res.status_code == 404
     assert "start a new one" in res.json()["detail"]
 
 
-def test_a_solo_match_run_can_be_played_over_rest(client):
-    run = client.post(
-        "/api/game/solo/match/start", json={"playerId": "http_m", "playerName": "nadav"}
-    ).json()
+def test_someone_elses_run_is_a_404(client, player_a, player_b):
+    """A run token is not a bearer credential.
+
+    Before, anyone holding the token could answer for the run and put a score
+    on the board under the owner's name.
+    """
+    run = client.post("/api/game/solo/start", headers=player_a["headers"]).json()
+    choice = correct_choice(run["question"])
+
+    res = client.post(
+        "/api/game/solo/answer",
+        json={"runToken": run["runToken"], "choice": choice},
+        headers=player_b["headers"],
+    )
+
+    assert res.status_code == 404
+
+
+def test_a_solo_match_run_can_be_played_over_rest(client, player_a):
+    run = client.post("/api/game/solo/match/start", headers=player_a["headers"]).json()
     assert run["lives"] == 3
     assert len(run["board"]["humans"]) == 4
 
     result = client.post(
         "/api/game/solo/match/submit",
         json={"runToken": run["runToken"], "pairs": perfect_pairs(run["board"])},
+        headers=player_a["headers"],
     ).json()
 
     assert result["wasPerfect"] is True
@@ -146,21 +188,24 @@ def test_a_solo_match_run_can_be_played_over_rest(client):
     assert result["board"] is not None
 
 
-def test_a_solo_match_board_rejects_a_shared_dog(client):
-    run = client.post(
-        "/api/game/solo/match/start", json={"playerId": "http_m", "playerName": "nadav"}
-    ).json()
+def test_a_solo_match_board_rejects_a_shared_dog(client, player_a):
+    run = client.post("/api/game/solo/match/start", headers=player_a["headers"]).json()
     res = client.post(
         "/api/game/solo/match/submit",
         json={"runToken": run["runToken"], "pairs": {"0": 1, "2": 1}},
+        headers=player_a["headers"],
     )
 
     assert res.status_code == 422
     assert "one person" in res.json()["detail"]
 
 
-def test_a_bogus_match_token_is_a_404(client):
-    res = client.post("/api/game/solo/match/submit", json={"runToken": "xxx", "pairs": {}})
+def test_a_bogus_match_token_is_a_404(client, player_a):
+    res = client.post(
+        "/api/game/solo/match/submit",
+        json={"runToken": "xxx", "pairs": {}},
+        headers=player_a["headers"],
+    )
 
     assert res.status_code == 404
 
@@ -191,9 +236,9 @@ def test_the_socket_refuses_an_unidentified_client(client, url):
             pass
 
 
-def test_two_players_can_play_a_game_over_the_socket(client, room, fast_pacing):
-    with client.websocket_connect("/api/game/ws?playerId=http_a&name=ilona") as a:
-        with client.websocket_connect("/api/game/ws?playerId=http_b&name=michal") as b:
+def test_two_players_can_play_a_game_over_the_socket(client, room, fast_pacing, player_a, player_b):
+    with client.websocket_connect(socket_url(player_a)) as a:
+        with client.websocket_connect(socket_url(player_b)) as b:
             assert a.receive_json()["type"] == "connected"
             assert b.receive_json()["type"] == "connected"
 
@@ -204,7 +249,8 @@ def test_two_players_can_play_a_game_over_the_socket(client, room, fast_pacing):
                 b, lambda m: m["type"] == "room_state" and len(m["payload"]["players"]) == 2
             )
             assert joined is not None, "both players should end up in the same room"
-            assert joined["payload"]["hostId"] == "http_a"
+            # The host id is the creator's user id, as a string.
+            assert joined["payload"]["hostId"] == str(player_a["id"])
 
             # Host-only rules hold over the wire, not just in the engine.
             b.send_json({"type": "game_start", "payload": {}})
@@ -242,11 +288,11 @@ def test_two_players_can_play_a_game_over_the_socket(client, room, fast_pacing):
             assert "leaderboard" in over["payload"], "the all-time board rides along"
 
 
-def test_two_players_race_for_the_same_pair_over_the_socket(client, match_room, fast_pacing):
+def test_two_players_race_for_the_same_pair_over_the_socket(client, match_room, fast_pacing, player_a, player_b):
     """The end-to-end version of ProjectPlan 2.10: one board, two players, one
     combination — and the server deciding who gets it."""
-    with client.websocket_connect("/api/game/ws?playerId=http_a&name=ilona") as a:
-        with client.websocket_connect("/api/game/ws?playerId=http_b&name=michal") as b:
+    with client.websocket_connect(socket_url(player_a)) as a:
+        with client.websocket_connect(socket_url(player_b)) as b:
             a.receive_json()
             b.receive_json()
             a.send_json({"type": "game_join", "payload": {"roomId": match_room["id"]}})
@@ -273,7 +319,9 @@ def test_two_players_race_for_the_same_pair_over_the_socket(client, match_room, 
             b.send_json({"type": "game_claim", "payload": contested})
             rejected = read_until(b, lambda m: m["type"] == "claim_rejected")
             assert rejected is not None
-            assert "ilona" in rejected["payload"]["message"]
+            # Named by their real username, which now comes from the database
+            # rather than from a `name` the browser supplied.
+            assert player_a["username"] in rejected["payload"]["message"]
 
             # The human is still playable for b — just not with that dog.
             other = (answers[0] + 1) % 4
@@ -287,13 +335,13 @@ def test_two_players_race_for_the_same_pair_over_the_socket(client, match_room, 
             assert end is not None, "the round never closed"
             assert end["payload"]["boardAnswer"] is not None, "the key comes out at the reveal"
             scores = {p["playerId"]: p["lastAward"] for p in end["payload"]["players"]}
-            assert scores["http_a"] > 0, "a right pair scores"
-            assert scores["http_b"] == 0, "a wrong pair doesn't"
+            assert scores[str(player_a["id"])] > 0, "a right pair scores"
+            assert scores[str(player_b["id"])] == 0, "a wrong pair doesn't"
 
 
-def test_the_clock_is_the_servers(client, room):
+def test_the_clock_is_the_servers(client, room, player_a):
     """Clients are told the server's `now`, so their countdowns can't drift."""
-    with client.websocket_connect("/api/game/ws?playerId=http_a&name=ilona") as a:
+    with client.websocket_connect(socket_url(player_a)) as a:
         a.receive_json()
         a.send_json({"type": "game_join", "payload": {"roomId": room["id"]}})
         state = read_until(a, lambda m: m["type"] == "room_state")

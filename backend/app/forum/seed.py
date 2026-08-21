@@ -1,17 +1,28 @@
-"""Cold seeding: a few fake authors and posts so the forum isn't empty on a
+"""Cold seeding: a few demo accounts and posts so the forum isn't empty on a
 fresh database (course guideline — "a few fake clients, with a few posts and
 comments already there"). Runs once at app startup; a no-op once any post
 exists, so it never overwrites real activity.
+
+These are **real user rows** now, not string labels, because `Post.author_id` is
+a foreign key. That has a consequence worth being deliberate about: they are
+login-capable accounts. Each therefore gets a long random password that is
+generated at seed time and never written down anywhere — nobody, including us,
+can log in as them. If you want to demo signing in as one, sign up normally
+instead.
 """
 from __future__ import annotations
 
-from ..database import SessionLocal
-from ..models import Comment, Post
+import secrets
 
+from ..database import SessionLocal
+from ..models import Comment, Post, User
+from ..security import hash_password
+
+# (username, email)
 _AUTHORS = [
-    ("seed_moodyoak", "moodyoak"),
-    ("seed_corgi_core", "corgi_core"),
-    ("seed_hufflepupp", "hufflepupp"),
+    ("moodyoak", "moodyoak@dogppelganger.invalid"),
+    ("corgi_core", "corgi_core@dogppelganger.invalid"),
+    ("hufflepupp", "hufflepupp@dogppelganger.invalid"),
 ]
 
 # (author index, body) — text-only, since seed authors have no real uploaded
@@ -38,24 +49,46 @@ _COMMENTS = [
 ]
 
 
+def _seed_users(db) -> list[User]:
+    """Get or create the demo accounts, so re-seeding never duplicates them."""
+    users: list[User] = []
+    for username, email in _AUTHORS:
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            user = User(
+                username=username,
+                email=email,
+                # Unguessable and unrecorded — see the module docstring.
+                password=hash_password(secrets.token_urlsafe(32)),
+            )
+            db.add(user)
+        users.append(user)
+    db.flush()  # assign ids before posts reference them
+    return users
+
+
 def seed_if_empty() -> None:
     db = SessionLocal()
     try:
         if db.query(Post).count() > 0:
             return
 
+        authors = _seed_users(db)
+
         posts: list[Post] = []
         for author_idx, body in _POSTS:
-            author_id, author_name = _AUTHORS[author_idx]
-            post = Post(author_id=author_id, author_name=author_name, body=body)
+            post = Post(author_id=authors[author_idx].id, body=body)
             db.add(post)
             posts.append(post)
         db.flush()  # assign post ids before the comments reference them
 
         for post_idx, author_idx, body in _COMMENTS:
-            author_id, author_name = _AUTHORS[author_idx]
             db.add(
-                Comment(post_id=posts[post_idx].id, author_id=author_id, author_name=author_name, body=body)
+                Comment(
+                    post_id=posts[post_idx].id,
+                    author_id=authors[author_idx].id,
+                    body=body,
+                )
             )
         db.commit()
     finally:

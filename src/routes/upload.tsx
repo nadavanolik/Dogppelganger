@@ -1,8 +1,8 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect, useRef, useState } from "react";
-import { AppShell, RequireAuth } from "@/components/AppShell";
+import { AppShell } from "@/components/AppShell";
 import { SharedTraits } from "@/components/MatchPair";
-import { useStore } from "@/lib/store";
+import { useAuth } from "@/lib/auth";
 import { uploadApi, type Rejected } from "@/lib/uploadApi";
 import { useUploadFeed } from "@/lib/uploadFeed";
 
@@ -11,9 +11,7 @@ export default UploadPage;
 function UploadPage() {
   return (
     <AppShell>
-      <RequireAuth>
-        <Upload />
-      </RequireAuth>
+      <Upload />
     </AppShell>
   );
 }
@@ -26,9 +24,9 @@ const ACCEPTED_TYPES = new Set(["image/png", "image/jpeg"]);
 type PendingImage = { file: File; src: string; urgent: boolean };
 
 function Upload() {
-  const { state } = useStore();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const owner = state.user ?? state.users[0];
+  const owner = user!;
   const [mode, setMode] = useState<"single" | "multi">("single");
   const [urgent, setUrgent] = useState(false);
   const single = useRef<HTMLInputElement>(null);
@@ -55,7 +53,7 @@ function Upload() {
     if (!files || !files[0]) return;
     setSubmitting(true);
     try {
-      const res = await uploadApi.upload(owner.id, [{ file: files[0], urgent }]);
+      const res = await uploadApi.upload([{ file: files[0], urgent }]);
       const created = res.created[0];
       if (!created) {
         setRejected((r) => [...res.rejected, ...r]);
@@ -95,10 +93,7 @@ function Upload() {
     if (pending.length === 0 || submitting) return;
     setSubmitting(true);
     try {
-      const res = await uploadApi.upload(
-        owner.id,
-        pending.map((p) => ({ file: p.file, urgent: p.urgent })),
-      );
+      const res = await uploadApi.upload(pending.map((p) => ({ file: p.file, urgent: p.urgent })));
       addToFeed(res.created);
       if (res.rejected.length > 0) setRejected((r) => [...res.rejected, ...r]);
       setPending([]);

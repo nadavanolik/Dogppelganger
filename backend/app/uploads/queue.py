@@ -26,7 +26,7 @@ from ..storage import layout
 
 log = logging.getLogger(__name__)
 
-Notify = Callable[[str, dict], Awaitable[None]]
+Notify = Callable[[int, dict], Awaitable[None]]
 
 WORKER_COUNT = 3
 IDLE_POLL_SECONDS = 0.5

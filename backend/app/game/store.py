@@ -226,6 +226,24 @@ def rank_of(board: str, player_id: str) -> int | None:
     return None
 
 
+def forget_player(player_id: str) -> int:
+    """Drop a player from every board. Returns how many entries went.
+
+    Called when an account is deleted. The boards live in a JSON file rather
+    than the database, so nothing cascades here — this is the hand-written
+    equivalent, and without it a deleted account keeps its high score forever
+    under an id nobody can claim.
+    """
+    removed = 0
+    with _lock:
+        for board in BOARDS:
+            if _state.boards.get(board, {}).pop(player_id, None) is not None:
+                removed += 1
+        if removed:
+            _mark_dirty()
+    return removed
+
+
 _load()
 # On a clean shutdown, write whatever the debounce timer hasn't got to yet.
 atexit.register(flush)

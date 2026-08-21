@@ -5,9 +5,9 @@
  * result — reads from here rather than fetching and subscribing for itself.
  * That matters for two reasons:
  *
- * 1. **One socket.** Each `useUploadNotifications` call opens its own
- *    connection, so a per-page subscription meant two or three sockets for one
- *    browser, each reconnecting independently.
+ * 1. **One socket.** Every live feature shares the single connection in
+ *    `appSocket.tsx`, so a browser holds one socket rather than one per
+ *    page, each reconnecting independently.
  * 2. **Notifications arrive wherever you are.** The socket used to be mounted
  *    inside the upload page, so a dog that finished while you were reading the
  *    forum announced itself to nobody. Mounted at the shell, a finished match
@@ -24,16 +24,18 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 
-import { useStore } from "./store";
+import { useAuth } from "./auth";
+import { useSocketEvent } from "./appSocket";
 import { uploadApi, type UploadJob } from "./uploadApi";
-import { useUploadNotifications } from "./uploadSocket";
 
 type Feed = {
   jobs: UploadJob[];
   loading: boolean;
   error: string | null;
-  /** Merge freshly-created jobs in, so the page doesn't wait for a refetch. */
+  /** Merge new *or updated* jobs in by id, so pages never hold a private copy. */
   add: (jobs: UploadJob[]) => void;
+  /** Drop a deleted job. */
+  remove: (jobId: number) => void;
 };
 
 const FeedCtx = createContext<Feed | null>(null);
@@ -46,8 +48,8 @@ function upsert(jobs: UploadJob[], incoming: UploadJob[]): UploadJob[] {
 }
 
 export function UploadFeedProvider({ children }: { children: ReactNode }) {
-  const { state, notifyMatchReady } = useStore();
-  const ownerId = state.user?.id ?? null;
+  const { user } = useAuth();
+  const ownerId = user?.id ?? null;
 
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [loading, setLoading] = useState(false);
@@ -65,7 +67,7 @@ export function UploadFeedProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
     setLoading(true);
     uploadApi
-      .list(ownerId)
+      .list()
       .then((rows) => {
         if (cancelled) return;
         // Everything already finished is history, not news — seed the set so
@@ -84,21 +86,34 @@ export function UploadFeedProvider({ children }: { children: ReactNode }) {
     };
   }, [ownerId]);
 
-  useUploadNotifications(ownerId, (job) => {
+  // Arrives on the one app-wide socket, so a dog that finishes while you're
+  // reading the forum still reaches the bell.
+  useSocketEvent("upload_update", (event) => {
+    const job = event.payload as unknown as UploadJob;
+    if (!job?.id) return;
     setJobs((prev) => upsert(prev, [job]));
     if (job.status === "done" && !announced.current.has(job.id)) {
       announced.current.add(job.id);
-      notifyMatchReady(job.id, job.filename);
     }
   });
 
   const add = useCallback((incoming: UploadJob[]) => {
-    // Jobs land here queued, so they are not announced yet — the socket will
-    // do that when each one finishes.
+    // Upserts by id, so this is also how a page writes a *changed* job back —
+    // sharing, for instance. A component that keeps its own copy of a job's
+    // state instead will go stale the moment the page unmounts, and then act on
+    // the stale value: that is exactly how the share toggle briefly became a
+    // button that could only ever share, never unshare.
     setJobs((prev) => upsert(prev, incoming));
   }, []);
 
-  const value = useMemo<Feed>(() => ({ jobs, loading, error, add }), [jobs, loading, error, add]);
+  const remove = useCallback((jobId: number) => {
+    setJobs((prev) => prev.filter((j) => j.id !== jobId));
+  }, []);
+
+  const value = useMemo<Feed>(
+    () => ({ jobs, loading, error, add, remove }),
+    [jobs, loading, error, add, remove],
+  );
 
   return <FeedCtx.Provider value={value}>{children}</FeedCtx.Provider>;
 }

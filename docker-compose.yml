@@ -32,6 +32,10 @@ services:
       # Where the storage layer puts image bytes — see DATA_STORAGE.md 3.
       DOG_DATA_DIR: /data/dogs
       UPLOAD_DATA_DIR: /app/data/uploads
+      # DM attachments (images and video) — same volume as uploads, and the
+      # reason to watch `docker system df -v` before a demo: a handful of 25MB
+      # clips is gigabytes.
+      ATTACHMENT_DATA_DIR: /app/data/attachments
     volumes:
       # Game leaderboards snapshot here (app/game/store.py), and user uploads
       # live under uploads/. A named volume so they survive `up --build` and CD

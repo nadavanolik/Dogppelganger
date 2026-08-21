@@ -104,7 +104,7 @@ These are assumed throughout the spec so each page can be described consistently
 - `POST /api/match/:matchId/share` / `DELETE .../share` → toggle public-gallery visibility.
 - `DELETE /api/match/:matchId` → remove.
 
-**Access guard:** a user may only view/act on their own match (`matchId` ownership checked server-side); others get 403.
+**Access guard:** a user may only view/act on their own match (`matchId` ownership checked server-side); others get **404, not 403**. This was specified as 403 and built as 404 on purpose: a 403 on a real id and a 404 on a made-up one is the difference an attacker needs to enumerate which uploads exist. "Not yours" and "doesn't exist" are deliberately indistinguishable. The one exception is attaching your own photo to a post, where a 403 is right — you picked the id out of your own list, so its existence is not a secret.
 
 **States:** loading; loaded (shared vs not-shared variants); not-found/forbidden; deleting.
 
@@ -112,7 +112,7 @@ These are assumed throughout the spec so each page can be described consistently
 
 ---
 
-### 2.6 Public Gallery — `/gallery` · AUTH (browsable; featured subset also shown on Landing)
+### 2.6 Public Gallery — `/gallery` · PUBLIC (browsable logged-out; featured subset also shown on Landing)
 
 **Purpose:** browse all matches users chose to share; also the image pool the matching game draws from.
 
