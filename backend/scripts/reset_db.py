@@ -17,9 +17,13 @@ environment — so that neither a stray shell-history recall nor a copied CI ste
 can trigger it alone. It is deliberately not wired into deploy.yml: a
 destructive step must never run on every push.
 
-What it does NOT touch: the ingested dog corpus under ``DOG_DATA_DIR``. That is
-226MB of immutable public photos that take a long time to re-ingest and have
-nothing to do with user identity.
+**What it does NOT touch: the dog corpus — neither the files nor the rows.**
+``dog_assets`` and ``calibrations`` hold no user data. They are derived from a
+public dataset by three offline passes that together take hours, and
+``ingest_dogs.py`` requires ``--source`` pointing at the 700MB AFHQ archive,
+which is not kept on the VM. Dropping them to delete somebody's photos would be
+a wildly disproportionate trade. Pass ``--include-corpus`` if you really do want
+a bare database.
 """
 from __future__ import annotations
 
@@ -39,6 +43,23 @@ from app.game import store  # noqa: E402
 from app.storage import layout  # noqa: E402
 
 
+# Tables that describe the public dog corpus rather than any person. Rebuilding
+# them means the AFHQ archive plus the embedding and calibration passes, so they
+# survive a reset by default — see the module docstring.
+CORPUS_TABLES = frozenset({"dog_assets", "calibrations"})
+
+
+def tables_to_drop(include_corpus: bool = False) -> list:
+    """Which tables a reset would drop, in dependency-safe order.
+
+    Split out so it can be asserted on without running anything destructive.
+    """
+    tables = list(Base.metadata.sorted_tables)
+    if include_corpus:
+        return tables
+    return [t for t in tables if t.name not in CORPUS_TABLES]
+
+
 def _rmtree(path: Path) -> int:
     """Delete a directory tree, reporting how many files went with it."""
     if not path.exists():
@@ -56,18 +77,30 @@ def main() -> int:
     parser.add_argument(
         "--dry-run", action="store_true", help="print what would go, change nothing"
     )
+    parser.add_argument(
+        "--include-corpus",
+        action="store_true",
+        help="also drop dog_assets and calibrations (needs a full re-ingest afterwards)",
+    )
     args = parser.parse_args()
 
     upload_root = layout.upload_root()
-    targets = [
-        f"database   {settings.DATABASE_URL}",
-        f"uploads    {upload_root}",
-        f"leaderboard {store.DATA_FILE}",
-    ]
+    doomed = tables_to_drop(args.include_corpus)
+
     print("This will permanently delete:")
-    for line in targets:
-        print(f"  - {line}")
-    print(f"Leaving alone: dog corpus at {layout.dog_root()}")
+    print(f"  - tables     {', '.join(sorted(t.name for t in doomed))}")
+    print(f"  - database   {settings.DATABASE_URL}")
+    print(f"  - uploads    {upload_root}")
+    print(f"  - attachments {layout.attachment_root()}")
+    print(f"  - leaderboard {store.DATA_FILE}")
+    if args.include_corpus:
+        print("\n  !! --include-corpus: the dog corpus rows go too. Rebuilding them")
+        print("     needs the AFHQ archive and the embedding + calibration passes.")
+    else:
+        print(
+            f"\nLeaving alone: the dog corpus - files at {layout.dog_root()}, and the\n"
+            f"  {', '.join(sorted(CORPUS_TABLES))} rows that describe them."
+        )
 
     if args.dry_run:
         print("\n--dry-run: nothing changed.")
@@ -81,13 +114,16 @@ def main() -> int:
         )
         return 2
 
-    print("\ndropping every table...")
-    Base.metadata.drop_all(bind=engine)
+    print(f"\ndropping {len(doomed)} table(s)...")
+    Base.metadata.drop_all(bind=engine, tables=doomed)
     print("recreating them from the models...")
     Base.metadata.create_all(bind=engine)
 
     removed = _rmtree(upload_root)
     print(f"removed {removed} upload file(s) from {upload_root}")
+
+    removed = _rmtree(layout.attachment_root())
+    print(f"removed {removed} attachment file(s) from {layout.attachment_root()}")
 
     if store.DATA_FILE.exists():
         # Keyed by arbitrary strings ("p_a", "u_moodyoak") that no longer
@@ -95,7 +131,7 @@ def main() -> int:
         store.DATA_FILE.unlink()
         print(f"removed {store.DATA_FILE}")
 
-    print("\ndone - the database is empty and consistent with the current models.")
+    print("\ndone - the database is consistent with the current models.")
     return 0
 
 

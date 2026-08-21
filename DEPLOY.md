@@ -152,21 +152,104 @@ cd ~/dogppelganger && docker compose run --rm model python scripts/migrate_schem
 `migrate_schema.py` can add and drop columns; it cannot turn a `VARCHAR(64)`
 holding `"u_moodyoak"` into an integer foreign key, because no `USING`
 expression exists for that. So the change that makes users real ships with a
-deliberate wipe, run **once, by hand**, between the pull and the restart:
+deliberate wipe. The full sequence is in **[Releasing the real-users
+change](#releasing-the-real-users-change)** below — do not run it standalone
+without reading that, because the order matters.
+
+It needs both `--yes` and `ALLOW_DB_RESET=1`, prints what it will destroy, and
+leaves the dog corpus alone — **both the files and the `dog_assets` /
+`calibrations` rows**, which hold no user data and would otherwise cost the
+700 MB archive plus the embedding and calibration passes to rebuild. It is
+**not** in `deploy.yml` on purpose: a destructive step must never run on every
+push.
+
+⚠️ Do **not** use `docker compose down -v` for this. That removes `dogdata` too,
+and re-ingesting the corpus is a 226 MB download and a long pass.
+
+---
+
+## Releasing the real-users change
+
+Read this end to end before starting. There is a window where the site is down,
+and the order is what keeps it short.
+
+### Why there is a window at all
+
+Pushing to `main` triggers the deploy automatically: it builds the images, SSHes
+in, runs `migrate_schema.py`, and restarts. But `migrate_schema.py` cannot make
+this particular change, so it will report "nothing to do" and the new code will
+come up against the **old schema** — where `owner_id` is still a `VARCHAR`.
+Postgres will reject the queries and the API will error until the reset is run.
+
+So the reset is not optional cleanup. It is part of the release, and it happens
+within a minute or two of the merge.
+
+### 0. Before you merge anything
+
+The VM is not on all the time. Start it, then:
 
 ```bash
+ssh vmadmin@52.188.127.173
 cd ~/dogppelganger
-docker compose pull
+grep SECRET_KEY .env
+```
+
+⚠️ **If `SECRET_KEY` is still a placeholder, fix it now.** The new backend
+refuses to start against Postgres with a known default value, so the `model`
+container will crash-loop and the reset in step 3 will have nothing to run in.
+
+```bash
+# only if it needs setting
+sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$(openssl rand -hex 32)/" .env
+```
+
+### 1. Fix the build pipeline first, on its own
+
+Deploys have been failing since the GHA build cache was added to the model step:
+`build-push-action` was using the default `docker` driver, which cannot export
+cache, so buildx died before building anything. `docker/setup-buildx-action` is
+the fix.
+
+Land that **before** the feature merge, and let it deploy on its own. You want
+to know the pipeline is healthy before you also change the schema — otherwise a
+red deploy has two possible causes and you're debugging both at once.
+
+### 2. Merge the feature
+
+Open a PR from `feat/real-users` into `main` (this is also the first time the
+branch gets CI, which runs lint, typecheck, build and the 284 tests), then
+merge. The deploy fires automatically. Expect the site to be broken from the
+moment the containers restart until step 3 completes.
+
+### 3. Reset, immediately
+
+```bash
+ssh vmadmin@52.188.127.173
+cd ~/dogppelganger
 docker compose run --rm -e ALLOW_DB_RESET=1 model python scripts/reset_db.py --yes
 docker compose up -d
 ```
 
-It needs both `--yes` and `ALLOW_DB_RESET=1`, prints what it will destroy, and
-leaves the dog corpus alone. It is **not** in `deploy.yml` on purpose — a
-destructive step must never run on every push.
+Every account, photo, post, message and leaderboard entry is gone; the dog
+corpus is untouched, so matching still works. The forum re-seeds itself with
+three demo accounts on the next start.
 
-⚠️ Do **not** use `docker compose down -v` for this. That removes `dogdata` too,
-and re-ingesting the corpus is a 226 MB download and a long pass.
+### 4. Check it
+
+```bash
+curl -s http://52.188.127.173/api/health
+curl -s http://52.188.127.173/api/gallery | head -c 200   # public, no auth
+```
+
+Then in a browser: sign up, upload a photo (over 1 MB — that path was broken
+before this release), share the match, open the gallery logged out, and send
+yourself a DM from a second account in a private window.
+
+### 5. What is deliberately not automated
+
+- The reset. Destructive and one-time.
+- Turning the VM on. It is off by default and that is intentional.
+- HEIC photo support and the remaining follow-ups in `MIGRATION.md`.
 
 ### Seed the dog corpus (once, after the first deploy)
 

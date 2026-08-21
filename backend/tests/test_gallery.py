@@ -149,6 +149,35 @@ def test_a_photo_behind_a_forum_post_is_visible_to_other_members(
     assert client.get(url).status_code == 404, "but still not to the logged-out world"
 
 
+# ------------------------------------------------------------- the reset script
+
+
+def test_the_reset_spares_the_dog_corpus():
+    """`reset_db.py` must not drop `dog_assets` / `calibrations`.
+
+    They hold no user data, and rebuilding them means the 700MB AFHQ archive
+    plus the embedding and calibration passes — hours of work that has nothing
+    to do with deleting somebody's photos. Asserted against the planning
+    function rather than by running the script, for obvious reasons.
+    """
+    import reset_db
+
+    names = {t.name for t in reset_db.tables_to_drop()}
+
+    assert "users" in names, "the whole point is to clear the user tables"
+    assert "upload_jobs" in names
+    assert "dog_assets" not in names
+    assert "calibrations" not in names
+
+
+def test_the_reset_can_be_asked_to_take_the_corpus_too():
+    import reset_db
+
+    names = {t.name for t in reset_db.tables_to_drop(include_corpus=True)}
+
+    assert {"dog_assets", "calibrations"} <= names
+
+
 # ---------------------------------------------------------- deleting a photo
 
 
