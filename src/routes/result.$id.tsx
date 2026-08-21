@@ -99,7 +99,7 @@ function Result() {
     <div className="max-w-3xl mx-auto card-pop p-8">
       <div className="text-center">
         <div className="text-sm font-bold text-muted-foreground uppercase tracking-wide">
-          Your dogppleganger is…
+          Your dogppelganger is…
         </div>
         {shown.score != null && (
           <h1 className="font-display text-5xl md:text-6xl font-black mt-1">

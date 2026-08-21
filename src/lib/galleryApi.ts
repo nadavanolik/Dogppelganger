@@ -39,6 +39,17 @@ export type Notification = {
   createdAt: string | null;
 };
 
+/**
+ * The bell's icon for a notification kind. Kinds come from the backend as a
+ * bare string (`app/models.py`): "match", "reaction", "comment". Chat messages
+ * are deliberately never notifications — they live in the envelope badge.
+ */
+export function notificationIcon(kind: string): string {
+  if (kind === "match") return "🐕";
+  if (kind === "comment") return "💬";
+  return "❤️";
+}
+
 export const notificationApi = {
   list: (limit = 30) =>
     api.get<{ unread: number; items: Notification[] }>(`/api/notifications?limit=${limit}`),

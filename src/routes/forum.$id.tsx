@@ -1,13 +1,47 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { useSocketEvent } from "@/lib/appSocket";
 import { useAuth } from "@/lib/auth";
 import { dmApi } from "@/lib/dmApi";
-import { forumApi, type ForumComment, type PostWithComments } from "@/lib/forumApi";
+import {
+  forumApi,
+  type ForumComment,
+  type ForumCommentDeletedEvent,
+  type ForumPostDeletedEvent,
+  type ForumReactionEvent,
+  type PostWithComments,
+} from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
 import { MatchPair } from "@/components/MatchPair";
 
 export default PostDetail;
+
+/**
+ * Add a comment to a thread exactly once, wherever it came from.
+ *
+ * Two paths carry the same comment to the author's own screen: the response to
+ * their POST, and the broadcast. **The broadcast usually wins** — the server
+ * pushes the frame before it returns the response — so neither path can assume
+ * it is first, and a guard on only one of them shows the comment twice. Both
+ * go through here instead.
+ */
+function withComment(post: PostWithComments, comment: ForumComment): PostWithComments {
+  if (comment.postId !== post.id) return post;
+  if (post.comments.some((c) => c.id === comment.id)) return post;
+  return { ...post, comments: [...post.comments, comment], commentCount: post.commentCount + 1 };
+}
+
+/** Remove a comment exactly once — the same race, in the other direction.
+ *  Filtering an absent id is harmless; decrementing the count twice is not. */
+function withoutComment(post: PostWithComments, commentId: number): PostWithComments {
+  if (!post.comments.some((c) => c.id === commentId)) return post;
+  return {
+    ...post,
+    comments: post.comments.filter((c) => c.id !== commentId),
+    commentCount: Math.max(0, post.commentCount - 1),
+  };
+}
 
 function PostDetail() {
   const { id } = useParams();
@@ -38,6 +72,46 @@ function PostDetail() {
     };
   }, [id]);
 
+  // Live updates for the thread you are looking at. Each handler filters on
+  // the post first — the socket is app-wide, so it carries every forum change,
+  // not only this one's.
+
+  useSocketEvent("forum_comment", (event) => {
+    const comment = event.payload as unknown as ForumComment;
+    setPost((p) => (p ? withComment(p, comment) : p));
+  });
+
+  useSocketEvent("forum_reaction", (event) => {
+    const summary = event.payload as unknown as ForumReactionEvent;
+    // Counts only, never `myReaction` — that one belongs to whoever clicked,
+    // and this browser's own thumb has to survive someone else's vote.
+    const counts = { likeCount: summary.likeCount, dislikeCount: summary.dislikeCount };
+    setPost((p) => {
+      if (!p) return p;
+      if (summary.targetType === "post") {
+        return p.id === summary.targetId ? { ...p, ...counts } : p;
+      }
+      return {
+        ...p,
+        comments: p.comments.map((c) => (c.id === summary.targetId ? { ...c, ...counts } : c)),
+      };
+    });
+  });
+
+  useSocketEvent("forum_comment_deleted", (event) => {
+    const { id, postId } = event.payload as unknown as ForumCommentDeletedEvent;
+    setPost((p) => (p && postId === p.id ? withoutComment(p, id) : p));
+  });
+
+  useSocketEvent("forum_post_deleted", (event) => {
+    const { id } = event.payload as unknown as ForumPostDeletedEvent;
+    if (post?.id !== id) return;
+    // The author deleted it while we were reading. Land on the same "not
+    // found" screen a stale link would.
+    setPost(null);
+    setNotFound(true);
+  });
+
   async function deletePost() {
     if (!post) return;
     // Worth spelling out that the photo survives — otherwise "delete" reads as
@@ -53,15 +127,7 @@ function PostDetail() {
   async function deleteComment(commentId: number) {
     if (!window.confirm("Delete this comment?")) return;
     await forumApi.removeComment(commentId);
-    setPost((p) =>
-      p
-        ? {
-            ...p,
-            comments: p.comments.filter((c) => c.id !== commentId),
-            commentCount: Math.max(0, p.commentCount - 1),
-          }
-        : p,
-    );
+    setPost((p) => (p ? withoutComment(p, commentId) : p));
   }
 
   async function reactToPost(kind: "like" | "dislike") {
@@ -88,9 +154,7 @@ function PostDetail() {
     setPosting(true);
     try {
       const comment = await forumApi.comment(post.id, body.trim());
-      setPost((p) =>
-        p ? { ...p, comments: [...p.comments, comment], commentCount: p.commentCount + 1 } : p,
-      );
+      setPost((p) => (p ? withComment(p, comment) : p));
       setBody("");
     } finally {
       setPosting(false);

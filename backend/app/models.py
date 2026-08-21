@@ -525,7 +525,7 @@ class Notification(Base):
     user_id = Column(
         Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    kind = Column(String(20), nullable=False)  # "match" | "reaction"
+    kind = Column(String(20), nullable=False)  # "match" | "reaction" | "comment"
     text = Column(String(200), nullable=False)
     href = Column(String(200), nullable=True)
     read_at = Column(DateTime, nullable=True)

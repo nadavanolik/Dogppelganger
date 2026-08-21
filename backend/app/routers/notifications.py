@@ -32,15 +32,56 @@ def _dict(row: Notification) -> dict:
 
 
 async def notify(
-    db: Session, user_id: int, kind: str, text: str, href: str | None = None
+    db: Session,
+    user_id: int,
+    kind: str,
+    text: str,
+    href: str | None = None,
+    *,
+    collapse_prefix: str | None = None,
 ) -> Notification:
     """Create a notification and push it if the recipient is connected.
 
     Persist first, push second — an offline recipient finds it on next login,
     which is the whole reason it is a row and not just a frame.
+
+    `collapse_prefix` folds repeated news from one person about one thing into
+    a single row: an unread notification of the same kind and href whose text
+    starts with the prefix is **rewritten** rather than joined by a second.
+    Pass the actor's `"@name "`.
+
+    Reactions want this. Liking, un-liking, liking again and then switching to
+    a dislike is one piece of news whose *value* changed, not four — and the
+    row has to end up saying what they think **now**, so collapsing cannot just
+    drop the later news on the floor. Comments pass nothing: a second comment
+    really is something new to hear.
     """
-    row = Notification(user_id=user_id, kind=kind, text=text[:200], href=href)
-    db.add(row)
+    row = None
+    if collapse_prefix is not None:
+        # The prefix is matched in Python, not with a SQL LIKE: a username may
+        # contain `_`, which LIKE reads as a single-character wildcard and
+        # would quietly collapse two different people's reactions into one.
+        candidates = (
+            db.query(Notification)
+            .filter(
+                Notification.user_id == user_id,
+                Notification.kind == kind,
+                Notification.href == href,
+                Notification.read_at.is_(None),
+            )
+            .all()
+        )
+        row = next((n for n in candidates if n.text.startswith(collapse_prefix)), None)
+
+    if row is None:
+        row = Notification(user_id=user_id, kind=kind, text=text[:200], href=href)
+        db.add(row)
+    else:
+        # Same story, new ending. The timestamp moves with it, since what it
+        # describes is the reaction they hold now, not the one they started on.
+        row.text = text[:200]
+        row.created_at = datetime.utcnow()
+
     db.commit()
     db.refresh(row)
     await manager.send_to_user(user_id, {"type": "notification", "payload": _dict(row)})

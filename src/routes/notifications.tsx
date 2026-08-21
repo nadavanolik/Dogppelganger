@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { useSocketEvent } from "@/lib/appSocket";
-import { notificationApi, type Notification } from "@/lib/galleryApi";
+import { notificationApi, notificationIcon, type Notification } from "@/lib/galleryApi";
 
 export default NotifPage;
 
@@ -55,7 +55,7 @@ function NotifPage() {
                 n.read ? "opacity-70" : ""
               }`}
             >
-              <div className="text-2xl">{n.kind === "match" ? "🐕" : "❤️"}</div>
+              <div className="text-2xl">{notificationIcon(n.kind)}</div>
               <div className="flex-1">
                 <div className="font-bold">{n.text}</div>
                 <div className="text-xs text-muted-foreground">
