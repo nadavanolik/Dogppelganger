@@ -184,32 +184,17 @@ def badge(size: int) -> Image.Image:
 # --- outputs -----------------------------------------------------------------
 
 
-def hex_of(rgb: tuple[int, int, int]) -> str:
-    return "#%02x%02x%02x" % rgb
+def write_favicon_png(path: Path, size: int) -> None:
+    """A PNG favicon at one exact size — what browsers actually reach for today.
 
-
-def write_favicon_svg(path: Path) -> None:
-    """The vector favicon modern browsers prefer.
-
-    The emoji is left as text so it renders with whatever colour emoji font the
-    viewer's OS has — the same way the header badge does.
+    Deliberately *not* an SVG. The mark is an emoji, and an SVG carrying it as
+    <text> has to be rasterized with a colour emoji font the browser may not
+    hand its favicon renderer — Chrome in particular is unreliable here, and
+    drawing nothing is worse than a pixel-exact PNG. Vectorizing the glyph
+    properly would mean pulling the COLR layers out of the font, which is a
+    dependency this repo has no other use for.
     """
-    view = 64
-    ring = view * RING_RATIO
-    radius = view / 2 - ring / 2
-    path.write_text(
-        f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {view} {view}">
-  <title>dogppelganger</title>
-  <circle cx="{view / 2}" cy="{view / 2}" r="{radius:.1f}"
-          fill="{hex_of(CORAL)}" stroke="{hex_of(INK)}" stroke-width="{ring:.1f}" />
-  <text x="{view / 2}" y="{view / 2}" font-size="{view * DOG_RATIO:.0f}"
-        text-anchor="middle" dominant-baseline="central"
-        font-family="'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif"
-  >{DOG}</text>
-</svg>
-""",
-        encoding="utf-8",
-    )
+    badge(size).save(path, format="PNG")
 
 
 def write_favicon_ico(path: Path) -> None:
@@ -277,7 +262,8 @@ def main() -> None:
     PUBLIC.mkdir(parents=True, exist_ok=True)
 
     outputs = [
-        ("favicon.svg", write_favicon_svg),
+        ("favicon-16x16.png", lambda p: write_favicon_png(p, 16)),
+        ("favicon-32x32.png", lambda p: write_favicon_png(p, 32)),
         ("favicon.ico", write_favicon_ico),
         ("apple-touch-icon.png", write_apple_touch_icon),
         ("og-image.png", write_og_image),
