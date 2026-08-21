@@ -191,17 +191,41 @@ The VM is not on all the time. Start it, then:
 ```bash
 ssh vmadmin@52.188.127.173
 cd ~/dogppelganger
-grep SECRET_KEY .env
+cat .env 2>/dev/null || echo "no .env — running on compose defaults"
 ```
 
-⚠️ **If `SECRET_KEY` is still a placeholder, fix it now.** The new backend
+⚠️ **If `SECRET_KEY` is missing or a placeholder, fix it now.** The new backend
 refuses to start against Postgres with a known default value, so the `model`
 container will crash-loop and the reset in step 3 will have nothing to run in.
+A deployment with no `.env` at all has been running on `SECRET_KEY=change-me`,
+which is one of the values it will refuse.
+
+⚠️ **Do not copy `.env.example` verbatim.** Its `POSTGRES_PASSWORD` is a
+placeholder, and Postgres only reads that variable when it *first* initialises
+its data directory. On a server that has already run, the `dbdata` volume keeps
+the original password, so a new value here only makes the API build a connection
+string the database rejects. Find out what is actually in use and match it:
 
 ```bash
-# only if it needs setting
-sed -i "s/^SECRET_KEY=.*/SECRET_KEY=$(openssl rand -hex 32)/" .env
+docker compose exec model printenv DATABASE_URL   # authoritative — it works today
 ```
+
+Then write the file, changing only the signing key:
+
+```bash
+cat > .env <<'EOF'
+SECRET_KEY=REPLACE_ME
+POSTGRES_USER=dogapp
+POSTGRES_PASSWORD=dogapp
+POSTGRES_DB=dogppelganger
+EOF
+sed -i "s|^SECRET_KEY=.*|SECRET_KEY=$(openssl rand -hex 32)|" .env
+
+docker compose up -d && curl -s localhost/api/health
+```
+
+Rotating the signing key logs out everyone currently signed in, which does not
+matter here — step 3 deletes the accounts anyway.
 
 ### 1. Fix the build pipeline first, on its own
 
