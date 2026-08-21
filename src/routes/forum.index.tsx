@@ -2,8 +2,15 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 
+import { useSocketEvent } from "@/lib/appSocket";
 import { useAuth } from "@/lib/auth";
-import { forumApi, type ForumPost } from "@/lib/forumApi";
+import {
+  forumApi,
+  type ForumComment,
+  type ForumPost,
+  type ForumPostDeletedEvent,
+  type ForumReactionEvent,
+} from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
 import { MatchPair } from "@/components/MatchPair";
 
@@ -29,6 +36,44 @@ function ForumList() {
       cancelled = true;
     };
   }, []);
+
+  // Live updates. Everything below has already been written to the database by
+  // the time it arrives — the socket carries a copy, not the only copy, so a
+  // dropped frame costs a refresh and never a post.
+
+  useSocketEvent("forum_post", (event) => {
+    const post = event.payload as unknown as ForumPost;
+    // Newest first, matching the server's ordering. Guarded because a
+    // broadcast reaches the author's own tab too, and theirs may already have
+    // it from the response to their POST.
+    setPosts((prev) => (prev.some((p) => p.id === post.id) ? prev : [post, ...prev]));
+  });
+
+  useSocketEvent("forum_comment", (event) => {
+    const comment = event.payload as unknown as ForumComment;
+    setPosts((prev) =>
+      prev.map((p) => (p.id === comment.postId ? { ...p, commentCount: p.commentCount + 1 } : p)),
+    );
+  });
+
+  useSocketEvent("forum_reaction", (event) => {
+    const summary = event.payload as unknown as ForumReactionEvent;
+    if (summary.targetType !== "post") return; // comment thumbs live on the detail page
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === summary.targetId
+          ? // `myReaction` is left alone on purpose: the counts are everyone's,
+            // that value is only ever this browser's.
+            { ...p, likeCount: summary.likeCount, dislikeCount: summary.dislikeCount }
+          : p,
+      ),
+    );
+  });
+
+  useSocketEvent("forum_post_deleted", (event) => {
+    const { id } = event.payload as unknown as ForumPostDeletedEvent;
+    setPosts((prev) => prev.filter((p) => p.id !== id));
+  });
 
   async function remove(post: ForumPost) {
     const warning = post.image

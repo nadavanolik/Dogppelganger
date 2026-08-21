@@ -1,9 +1,17 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
+import { useSocketEvent } from "@/lib/appSocket";
 import { useAuth } from "@/lib/auth";
 import { dmApi } from "@/lib/dmApi";
-import { forumApi, type ForumComment, type PostWithComments } from "@/lib/forumApi";
+import {
+  forumApi,
+  type ForumComment,
+  type ForumCommentDeletedEvent,
+  type ForumPostDeletedEvent,
+  type ForumReactionEvent,
+  type PostWithComments,
+} from "@/lib/forumApi";
 import { uploadImageUrl } from "@/lib/uploadApi";
 import { MatchPair } from "@/components/MatchPair";
 
@@ -37,6 +45,58 @@ function PostDetail() {
       cancelled = true;
     };
   }, [id]);
+
+  // Live updates for the thread you are looking at. Each handler filters on
+  // the post first — the socket is app-wide, so it carries every forum change,
+  // not only this one's.
+
+  useSocketEvent("forum_comment", (event) => {
+    const comment = event.payload as unknown as ForumComment;
+    setPost((p) => {
+      if (!p || comment.postId !== p.id) return p;
+      // The author's own tab already appended this from the POST response.
+      if (p.comments.some((c) => c.id === comment.id)) return p;
+      return { ...p, comments: [...p.comments, comment], commentCount: p.commentCount + 1 };
+    });
+  });
+
+  useSocketEvent("forum_reaction", (event) => {
+    const summary = event.payload as unknown as ForumReactionEvent;
+    // Counts only, never `myReaction` — that one belongs to whoever clicked,
+    // and this browser's own thumb has to survive someone else's vote.
+    const counts = { likeCount: summary.likeCount, dislikeCount: summary.dislikeCount };
+    setPost((p) => {
+      if (!p) return p;
+      if (summary.targetType === "post") {
+        return p.id === summary.targetId ? { ...p, ...counts } : p;
+      }
+      return {
+        ...p,
+        comments: p.comments.map((c) => (c.id === summary.targetId ? { ...c, ...counts } : c)),
+      };
+    });
+  });
+
+  useSocketEvent("forum_comment_deleted", (event) => {
+    const { id, postId } = event.payload as unknown as ForumCommentDeletedEvent;
+    setPost((p) => {
+      if (!p || postId !== p.id || !p.comments.some((c) => c.id === id)) return p;
+      return {
+        ...p,
+        comments: p.comments.filter((c) => c.id !== id),
+        commentCount: Math.max(0, p.commentCount - 1),
+      };
+    });
+  });
+
+  useSocketEvent("forum_post_deleted", (event) => {
+    const { id } = event.payload as unknown as ForumPostDeletedEvent;
+    if (post?.id !== id) return;
+    // The author deleted it while we were reading. Land on the same "not
+    // found" screen a stale link would.
+    setPost(null);
+    setNotFound(true);
+  });
 
   async function deletePost() {
     if (!post) return;

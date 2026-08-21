@@ -171,3 +171,156 @@ def test_the_comments_route_is_not_swallowed_by_the_post_route(client, user):
     res = client.delete(f"/api/forum/comments/{comment['id']}", headers=user["headers"])
 
     assert res.status_code == 204, "a 422 here means the routes are in the wrong order"
+
+
+# --------------------------------------------------------------- live updates
+#
+# The forum used to be fetch-on-mount only, so somebody else's post appeared
+# only if you reloaded. These cover the push half; see app/forum/router.py.
+
+
+def comment_as(client, user, post_id: int, body="nice") -> dict:
+    res = client.post(
+        f"/api/forum/{post_id}/comments", json={"body": body}, headers=user["headers"]
+    )
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def like(client, user, target_type: str, target_id: int, kind="like"):
+    return client.post(
+        "/api/forum/react",
+        json={"targetType": target_type, "targetId": target_id, "kind": kind},
+        headers=user["headers"],
+    )
+
+
+def test_a_new_post_reaches_everyone_else_live(client, user, other_user):
+    """The forum is public to every signed-in user, so this broadcasts rather
+    than targeting one recipient the way a DM does."""
+    with client.websocket_connect(f"/api/ws?token={other_user['token']}") as socket:
+        assert socket.receive_json()["type"] == "connected"
+
+        post_as(client, user, "live from the kennel")
+
+        event = socket.receive_json()
+
+    assert event["type"] == "forum_post"
+    assert event["payload"]["body"] == "live from the kennel"
+
+
+def test_a_new_comment_reaches_everyone_else_live(client, user, other_user):
+    body = post_as(client, user, "a thread")
+
+    with client.websocket_connect(f"/api/ws?token={other_user['token']}") as socket:
+        socket.receive_json()
+
+        comment_as(client, user, body["id"], "first")
+
+        event = socket.receive_json()
+
+    assert event["type"] == "forum_comment"
+    assert event["payload"]["postId"] == body["id"]
+    assert event["payload"]["body"] == "first"
+
+
+def test_a_reaction_broadcasts_counts_but_never_whose(client, user, other_user):
+    """`myReaction` is computed per viewer. Pushing it would light up everyone
+    else's thumb as though they had been the one to click it."""
+    body = post_as(client, user, "vote on me")
+
+    with client.websocket_connect(f"/api/ws?token={other_user['token']}") as socket:
+        socket.receive_json()
+
+        # Their own post, so no notification competes for the next frame.
+        like(client, user, "post", body["id"])
+
+        event = socket.receive_json()
+
+    assert event["type"] == "forum_reaction"
+    assert event["payload"]["likeCount"] == 1
+    assert "myReaction" not in event["payload"], "that value is only true for one viewer"
+
+
+def test_deleting_a_post_tells_the_room(client, user, other_user):
+    """Otherwise a post you removed sits on everyone else's screen until they
+    reload, and clicking it 404s."""
+    body = post_as(client, user, "regrettable")
+
+    with client.websocket_connect(f"/api/ws?token={other_user['token']}") as socket:
+        socket.receive_json()
+
+        client.delete(f"/api/forum/{body['id']}", headers=user["headers"])
+
+        event = socket.receive_json()
+
+    assert event["type"] == "forum_post_deleted"
+    assert event["payload"]["id"] == body["id"]
+
+
+# ------------------------------------------------------------- notifications
+#
+# The bell, its badge and /notifications were all built and wired to a
+# `notify()` that nothing ever called. The forum is its first caller.
+
+
+def bell(client, user) -> dict:
+    return client.get("/api/notifications", headers=user["headers"]).json()
+
+
+def test_commenting_notifies_the_post_author(client, user, other_user):
+    body = post_as(client, user, "say something")
+
+    comment_as(client, other_user, body["id"])
+
+    inbox = bell(client, user)
+    assert inbox["unread"] == 1
+    assert inbox["items"][0]["kind"] == "comment"
+    assert inbox["items"][0]["href"] == f"/forum/{body['id']}"
+    assert other_user["username"] in inbox["items"][0]["text"]
+
+
+def test_liking_notifies_the_author_of_a_comment_too(client, user, other_user):
+    """The href points at the post, because that is where a comment is read."""
+    body = post_as(client, other_user, "a thread")
+    mine = comment_as(client, user, body["id"], "my two cents")
+
+    like(client, other_user, "comment", mine["id"], "dislike")
+
+    inbox = bell(client, user)
+    assert inbox["unread"] == 1
+    assert inbox["items"][0]["kind"] == "reaction"
+    assert "disliked your comment" in inbox["items"][0]["text"]
+    assert inbox["items"][0]["href"] == f"/forum/{body['id']}"
+
+
+def test_your_own_doing_never_rings_your_own_bell(client, user):
+    body = post_as(client, user, "talking to myself")
+    comment_as(client, user, body["id"])
+    like(client, user, "post", body["id"])
+
+    assert bell(client, user)["unread"] == 0
+
+
+def test_taking_a_like_back_is_not_news(client, user, other_user):
+    """Reacting the same way twice clears the reaction. Treating that as news
+    would ring the bell for something that just stopped being true."""
+    body = post_as(client, user, "fickle audience")
+
+    like(client, other_user, "post", body["id"])
+    like(client, other_user, "post", body["id"])  # clears it
+
+    assert bell(client, user)["unread"] == 1
+
+
+def test_toggling_the_same_like_does_not_stack_the_bell(client, user, other_user):
+    """`collapse_unread`: one person fiddling with a button is one piece of
+    news, however many times they click."""
+    body = post_as(client, user, "fickle audience")
+
+    for _ in range(3):
+        like(client, other_user, "post", body["id"])  # on, off, on again
+
+    inbox = bell(client, user)
+    assert inbox["unread"] == 1
+    assert len(inbox["items"]) == 1

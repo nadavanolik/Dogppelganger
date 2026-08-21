@@ -21,6 +21,16 @@ Event types pushed from here:
     dm_read         the other participant read your messages
     notification    a bell notification was created for you
 
+Broadcast to everyone connected, since the forum is public to every signed-in
+user (see app/forum/router.py):
+
+    forum_post              a post was created
+    forum_comment           a comment was added
+    forum_reaction          like/dislike counts changed — counts only, never
+                            `myReaction`, which is per viewer
+    forum_post_deleted      {id}
+    forum_comment_deleted   {id, postId}
+
 Note: the connection registry is in-memory, so run a single worker. Scaling to
 multiple workers later means moving this to Redis pub/sub.
 """

@@ -50,6 +50,26 @@ export type ForumComment = ReactionSummary & {
 
 export type PostWithComments = ForumPost & { comments: ForumComment[] };
 
+/**
+ * Payloads the socket broadcasts when the forum changes — see
+ * `backend/app/forum/router.py`. A new post or comment arrives as its whole
+ * self, so it can be dropped straight into the list.
+ *
+ * A reaction deliberately does **not**: `myReaction` is computed per viewer,
+ * and one broadcast body cannot be right for everybody. Only the counts travel,
+ * and each browser keeps its own thumb state.
+ */
+export type ForumReactionEvent = {
+  targetType: "post" | "comment";
+  targetId: number;
+  likeCount: number;
+  dislikeCount: number;
+};
+
+export type ForumPostDeletedEvent = { id: number };
+
+export type ForumCommentDeletedEvent = { id: number; postId: number };
+
 export const forumApi = {
   list: () => api.get<ForumPost[]>(BASE),
 

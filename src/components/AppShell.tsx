@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useSocketEvent } from "@/lib/appSocket";
 import { useAuth } from "@/lib/auth";
 import { dmApi } from "@/lib/dmApi";
-import { notificationApi, type Notification } from "@/lib/galleryApi";
+import { notificationApi, notificationIcon, type Notification } from "@/lib/galleryApi";
 import { LogoBadge } from "@/components/LogoBadge";
 import {
   DropdownMenu,
@@ -155,7 +155,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                           }}
                           className="w-full text-left px-2 py-2 rounded-lg hover:bg-muted flex gap-2"
                         >
-                          <span>{n.kind === "match" ? "🐕" : n.kind === "dm" ? "💌" : "❤️"}</span>
+                          <span>{notificationIcon(n.kind)}</span>
                           <span className="text-sm">{n.text}</span>
                         </button>
                       ))}

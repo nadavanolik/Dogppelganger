@@ -32,13 +32,39 @@ def _dict(row: Notification) -> dict:
 
 
 async def notify(
-    db: Session, user_id: int, kind: str, text: str, href: str | None = None
-) -> Notification:
+    db: Session,
+    user_id: int,
+    kind: str,
+    text: str,
+    href: str | None = None,
+    *,
+    collapse_unread: bool = False,
+) -> Notification | None:
     """Create a notification and push it if the recipient is connected.
 
     Persist first, push second — an offline recipient finds it on next login,
     which is the whole reason it is a row and not just a frame.
+
+    `collapse_unread` skips the write when an identical notification is already
+    sitting unread. Reactions want it: liking, un-liking and liking again is
+    one piece of news, not three. Comments do not — a second comment really is
+    something new to hear about. Returns None when a write was collapsed away.
     """
+    if collapse_unread:
+        already = (
+            db.query(Notification)
+            .filter(
+                Notification.user_id == user_id,
+                Notification.kind == kind,
+                Notification.text == text[:200],
+                Notification.href == href,
+                Notification.read_at.is_(None),
+            )
+            .first()
+        )
+        if already is not None:
+            return None
+
     row = Notification(user_id=user_id, kind=kind, text=text[:200], href=href)
     db.add(row)
     db.commit()

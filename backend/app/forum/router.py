@@ -25,6 +25,8 @@ from sqlalchemy.orm import Session, joinedload
 from ..database import get_db
 from ..deps import get_current_user
 from ..models import Comment, Post, Reaction, UploadJob, User, shared_traits_payload
+from ..routers.notifications import notify
+from ..routers.ws import manager
 from ..serialization import author_ref
 
 router = APIRouter(prefix="/api/forum", tags=["forum"])
@@ -109,6 +111,44 @@ def _post_dict(db: Session, post: Post, viewer_id: int | None, *, with_comments:
     return data
 
 
+# ------------------------------------------------------------- live updates
+#
+# Every write below persists first and pushes second, the same order the DMs
+# and `notify()` follow: the row is the truth, the frame is a courtesy. A
+# socket that was flapping costs someone a live update, never the content.
+
+
+async def _broadcast(event_type: str, payload: dict) -> None:
+    """Push a forum change to every connected client.
+
+    `broadcast`, not `send_to_user`: the forum is readable by everyone signed
+    in, unlike a DM with its two participants.
+    """
+    await manager.broadcast({"type": event_type, "payload": payload})
+
+
+async def _notify_author(
+    db: Session,
+    author_id: int | None,
+    actor: User,
+    kind: str,
+    text: str,
+    href: str,
+    *,
+    collapse_unread: bool,
+) -> None:
+    """Tell a post or comment's author what just happened to it.
+
+    Two things are never worth a notification: your own doing, and news for an
+    author who no longer exists — `author_id` is nullable because deleting an
+    account anonymises what it wrote rather than removing it, see
+    app/serialization.py.
+    """
+    if author_id is None or author_id == actor.id:
+        return
+    await notify(db, author_id, kind, text, href, collapse_unread=collapse_unread)
+
+
 # --------------------------------------------------------------------- posts
 
 
@@ -131,7 +171,7 @@ def shareable_images(
 
 
 @router.post("", status_code=201)
-def create_post(
+async def create_post(
     data: PostCreate,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -155,7 +195,15 @@ def create_post(
     db.add(post)
     db.commit()
     db.refresh(post)
-    return _post_dict(db, post, user.id)
+
+    # Serialized with viewer_id=None. `myReaction` is computed per viewer, so
+    # one broadcast body has to be true for everyone — and null is genuinely
+    # true here: nobody has reacted to a post that did not exist a moment ago.
+    # That also makes it identical to the author's own view, so one dict does
+    # for both the push and the response.
+    payload = _post_dict(db, post, None)
+    await _broadcast("forum_post", payload)
+    return payload
 
 
 @router.get("")
@@ -185,7 +233,7 @@ def get_post(
 
 
 @router.post("/{post_id}/comments", status_code=201)
-def add_comment(
+async def add_comment(
     post_id: int,
     data: CommentCreate,
     db: Session = Depends(get_db),
@@ -198,7 +246,22 @@ def add_comment(
     db.add(comment)
     db.commit()
     db.refresh(comment)
-    return _comment_dict(db, comment, user.id)
+
+    # viewer_id=None for the same reason as a new post — see create_post.
+    payload = _comment_dict(db, comment, None)
+    await _broadcast("forum_comment", payload)
+    # Not collapsed: a second comment is genuinely something new to hear about,
+    # unlike a like that was toggled off and on again.
+    await _notify_author(
+        db,
+        post.author_id,
+        user,
+        "comment",
+        f"@{user.username} commented on your post",
+        f"/forum/{post.id}",
+        collapse_unread=False,
+    )
+    return payload
 
 
 def _drop_reactions(db: Session, target_type: str, target_id: int) -> None:
@@ -212,7 +275,7 @@ def _drop_reactions(db: Session, target_type: str, target_id: int) -> None:
 # `post_id` is typed `int`, so the other way round `DELETE /comments/5` would hit
 # that route with post_id="comments" and 422 instead of falling through.
 @router.delete("/comments/{comment_id}", status_code=204)
-def delete_comment(
+async def delete_comment(
     comment_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -222,14 +285,19 @@ def delete_comment(
     if comment is None or comment.author_id != user.id:
         raise HTTPException(404, "That comment doesn't exist any more.")
 
+    # Read the thread it belonged to before the delete — the instance is
+    # expired afterwards, and the frame has to say which post to update.
+    post_id = comment.post_id
     _drop_reactions(db, "comment", comment.id)
     db.delete(comment)
     db.commit()
+
+    await _broadcast("forum_comment_deleted", {"id": comment_id, "postId": post_id})
     return None
 
 
 @router.delete("/{post_id}", status_code=204)
-def delete_post(
+async def delete_post(
     post_id: int,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -252,20 +320,24 @@ def delete_post(
     _drop_reactions(db, "post", post.id)
     db.delete(post)
     db.commit()
+
+    await _broadcast("forum_post_deleted", {"id": post_id})
     return None
 
 
 @router.post("/react")
-def react(
+async def react(
     data: ReactIn,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    # The row itself, not just whether it exists: whoever wrote it is the one
+    # to notify, and a comment carries the post its href has to point at.
     if data.targetType == "post":
-        exists = db.get(Post, data.targetId) is not None
+        target = db.get(Post, data.targetId)
     else:
-        exists = db.get(Comment, data.targetId) is not None
-    if not exists:
+        target = db.get(Comment, data.targetId)
+    if target is None:
         raise HTTPException(404, "That doesn't exist any more.")
 
     existing = (
@@ -283,10 +355,44 @@ def react(
                 is_like=want_like,
             )
         )
+        reacted = True
     elif existing.is_like == want_like:
         db.delete(existing)  # reacting the same way again clears it
+        reacted = False
     else:
         existing.is_like = want_like  # like <-> dislike
+        reacted = True
     db.commit()
 
-    return _reaction_summary(db, data.targetType, data.targetId, user.id)
+    summary = _reaction_summary(db, data.targetType, data.targetId, user.id)
+
+    # Counts only. `myReaction` in this summary belongs to whoever just
+    # clicked, so broadcasting it would light up everyone else's button as
+    # though they had reacted. Each client merges the counts and keeps its own.
+    await _broadcast(
+        "forum_reaction",
+        {
+            "targetType": data.targetType,
+            "targetId": data.targetId,
+            "likeCount": summary["likeCount"],
+            "dislikeCount": summary["dislikeCount"],
+        },
+    )
+
+    # Only when a reaction was added or flipped. Taking one back is not news,
+    # and notifying on it would make like -> unlike -> like ring three times.
+    if reacted:
+        verb = "liked" if want_like else "disliked"
+        noun = "post" if data.targetType == "post" else "comment"
+        post_id = target.id if data.targetType == "post" else target.post_id
+        await _notify_author(
+            db,
+            target.author_id,
+            user,
+            "reaction",
+            f"@{user.username} {verb} your {noun}",
+            f"/forum/{post_id}",
+            collapse_unread=True,
+        )
+
+    return summary
