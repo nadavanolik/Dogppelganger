@@ -39,6 +39,9 @@ jobs:
       - run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
       - name: Byte-compile (syntax check)
         run: python -m compileall backend/main.py backend/app backend/tests backend/scripts
-      - name: Game tests (engine + API + WebSocket)
+      # `pytest` with no arguments picks up everything under backend/tests —
+      # pytest.ini sets `testpaths = tests` — so a new test file is in CI the
+      # moment it is committed, with no change here.
+      - name: Tests (accounts, DMs, uploads, gallery, forum, games)
         run: pytest
         working-directory: backend

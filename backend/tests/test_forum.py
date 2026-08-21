@@ -324,3 +324,29 @@ def test_toggling_the_same_like_does_not_stack_the_bell(client, user, other_user
     inbox = bell(client, user)
     assert inbox["unread"] == 1
     assert len(inbox["items"]) == 1
+
+
+def test_flipping_a_like_to_a_dislike_rewrites_the_one_notification(client, user, other_user):
+    """Changing your mind is not a second piece of news — but the bell has to
+    end up saying what they think now, so the row is rewritten, not skipped."""
+    body = post_as(client, user, "divisive")
+
+    like(client, other_user, "post", body["id"], "like")
+    like(client, other_user, "post", body["id"], "dislike")
+
+    inbox = bell(client, user)
+    assert inbox["unread"] == 1
+    assert len(inbox["items"]) == 1
+    assert "disliked your post" in inbox["items"][0]["text"]
+
+
+def test_two_people_reacting_are_two_pieces_of_news(client, user, other_user, user_factory):
+    """The collapse keys on who acted. Folding these together would hide one
+    of them entirely."""
+    third = user_factory()
+    body = post_as(client, user, "popular")
+
+    like(client, other_user, "post", body["id"])
+    like(client, third, "post", body["id"])
+
+    assert bell(client, user)["unread"] == 2

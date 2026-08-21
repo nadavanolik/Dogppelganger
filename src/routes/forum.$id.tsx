@@ -17,6 +17,32 @@ import { MatchPair } from "@/components/MatchPair";
 
 export default PostDetail;
 
+/**
+ * Add a comment to a thread exactly once, wherever it came from.
+ *
+ * Two paths carry the same comment to the author's own screen: the response to
+ * their POST, and the broadcast. **The broadcast usually wins** — the server
+ * pushes the frame before it returns the response — so neither path can assume
+ * it is first, and a guard on only one of them shows the comment twice. Both
+ * go through here instead.
+ */
+function withComment(post: PostWithComments, comment: ForumComment): PostWithComments {
+  if (comment.postId !== post.id) return post;
+  if (post.comments.some((c) => c.id === comment.id)) return post;
+  return { ...post, comments: [...post.comments, comment], commentCount: post.commentCount + 1 };
+}
+
+/** Remove a comment exactly once — the same race, in the other direction.
+ *  Filtering an absent id is harmless; decrementing the count twice is not. */
+function withoutComment(post: PostWithComments, commentId: number): PostWithComments {
+  if (!post.comments.some((c) => c.id === commentId)) return post;
+  return {
+    ...post,
+    comments: post.comments.filter((c) => c.id !== commentId),
+    commentCount: Math.max(0, post.commentCount - 1),
+  };
+}
+
 function PostDetail() {
   const { id } = useParams();
   const { user: me } = useAuth();
@@ -52,12 +78,7 @@ function PostDetail() {
 
   useSocketEvent("forum_comment", (event) => {
     const comment = event.payload as unknown as ForumComment;
-    setPost((p) => {
-      if (!p || comment.postId !== p.id) return p;
-      // The author's own tab already appended this from the POST response.
-      if (p.comments.some((c) => c.id === comment.id)) return p;
-      return { ...p, comments: [...p.comments, comment], commentCount: p.commentCount + 1 };
-    });
+    setPost((p) => (p ? withComment(p, comment) : p));
   });
 
   useSocketEvent("forum_reaction", (event) => {
@@ -79,14 +100,7 @@ function PostDetail() {
 
   useSocketEvent("forum_comment_deleted", (event) => {
     const { id, postId } = event.payload as unknown as ForumCommentDeletedEvent;
-    setPost((p) => {
-      if (!p || postId !== p.id || !p.comments.some((c) => c.id === id)) return p;
-      return {
-        ...p,
-        comments: p.comments.filter((c) => c.id !== id),
-        commentCount: Math.max(0, p.commentCount - 1),
-      };
-    });
+    setPost((p) => (p && postId === p.id ? withoutComment(p, id) : p));
   });
 
   useSocketEvent("forum_post_deleted", (event) => {
@@ -113,15 +127,7 @@ function PostDetail() {
   async function deleteComment(commentId: number) {
     if (!window.confirm("Delete this comment?")) return;
     await forumApi.removeComment(commentId);
-    setPost((p) =>
-      p
-        ? {
-            ...p,
-            comments: p.comments.filter((c) => c.id !== commentId),
-            commentCount: Math.max(0, p.commentCount - 1),
-          }
-        : p,
-    );
+    setPost((p) => (p ? withoutComment(p, commentId) : p));
   }
 
   async function reactToPost(kind: "like" | "dislike") {
@@ -148,9 +154,7 @@ function PostDetail() {
     setPosting(true);
     try {
       const comment = await forumApi.comment(post.id, body.trim());
-      setPost((p) =>
-        p ? { ...p, comments: [...p.comments, comment], commentCount: p.commentCount + 1 } : p,
-      );
+      setPost((p) => (p ? withComment(p, comment) : p));
       setBody("");
     } finally {
       setPosting(false);

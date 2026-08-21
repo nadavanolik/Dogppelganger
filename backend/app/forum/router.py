@@ -135,7 +135,7 @@ async def _notify_author(
     text: str,
     href: str,
     *,
-    collapse_unread: bool,
+    collapse_prefix: str | None = None,
 ) -> None:
     """Tell a post or comment's author what just happened to it.
 
@@ -146,7 +146,7 @@ async def _notify_author(
     """
     if author_id is None or author_id == actor.id:
         return
-    await notify(db, author_id, kind, text, href, collapse_unread=collapse_unread)
+    await notify(db, author_id, kind, text, href, collapse_prefix=collapse_prefix)
 
 
 # --------------------------------------------------------------------- posts
@@ -250,8 +250,8 @@ async def add_comment(
     # viewer_id=None for the same reason as a new post — see create_post.
     payload = _comment_dict(db, comment, None)
     await _broadcast("forum_comment", payload)
-    # Not collapsed: a second comment is genuinely something new to hear about,
-    # unlike a like that was toggled off and on again.
+    # No collapse: a second comment is genuinely something new to hear about,
+    # unlike a thumb that was moved around.
     await _notify_author(
         db,
         post.author_id,
@@ -259,7 +259,6 @@ async def add_comment(
         "comment",
         f"@{user.username} commented on your post",
         f"/forum/{post.id}",
-        collapse_unread=False,
     )
     return payload
 
@@ -392,7 +391,10 @@ async def react(
             "reaction",
             f"@{user.username} {verb} your {noun}",
             f"/forum/{post_id}",
-            collapse_unread=True,
+            # Everything this person has already said about this post, unread,
+            # is the same piece of news — including a like they have since
+            # switched to a dislike. One row, rewritten to the current verb.
+            collapse_prefix=f"@{user.username} ",
         )
 
     return summary
