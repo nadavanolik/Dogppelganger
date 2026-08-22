@@ -106,7 +106,7 @@ function PublicLanding() {
           {shared.map((item) => (
             <DogCard
               key={item.jobId}
-              dogIndex={item.dogIndex}
+              dog={item.dog}
               humanUrl={item.thumbUrl}
               username={item.owner.username}
               sharedTraits={item.sharedTraits}

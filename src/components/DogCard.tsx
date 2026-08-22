@@ -1,8 +1,11 @@
-import { dogSrc } from "@/lib/dogSrc";
-import type { SharedTrait } from "@/lib/uploadApi";
+import type { DogRef, SharedTrait } from "@/lib/uploadApi";
 
 /**
  * One human-to-dog pair in the gallery.
+ *
+ * Both photos show at equal size, side by side — a shared match is about the
+ * pair, and a tiny avatar next to a big dog buried the half of the story that
+ * makes the resemblance judgeable at a glance.
  *
  * Takes plain props rather than the old mock `DogMatch` object, so the same
  * card serves the public gallery and the landing page from real API data.
@@ -10,13 +13,13 @@ import type { SharedTrait } from "@/lib/uploadApi";
  * match it needs no token, because sharing is what makes it public.
  */
 export function DogCard({
-  dogIndex,
+  dog,
   humanUrl,
   username,
   sharedTraits = [],
   size = "md",
 }: {
-  dogIndex: number | null;
+  dog: DogRef | null;
   humanUrl?: string | null;
   username: string;
   sharedTraits?: SharedTrait[];
@@ -26,39 +29,39 @@ export function DogCard({
 
   return (
     <div className="card-pop-sm overflow-hidden">
-      <div className={`${dim} bg-muted flex items-center justify-center relative overflow-hidden`}>
-        {dogIndex != null ? (
-          <img
-            src={dogSrc(dogIndex, size === "lg" ? "512" : "256")}
-            alt="the matched dog"
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <span className="text-6xl" aria-hidden="true">
-            🐾
-          </span>
-        )}
-      </div>
-      <div className="p-3">
-        <div className="flex items-center gap-2">
+      <div className={`${dim} flex relative`}>
+        <div className="flex-1 bg-muted overflow-hidden">
           {humanUrl ? (
+            <img src={humanUrl} alt="the person" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full grid place-items-center text-4xl" aria-hidden="true">
+              🧑
+            </div>
+          )}
+        </div>
+        <div className="flex-1 bg-muted overflow-hidden border-l-2 border-[var(--ink)]">
+          {dog ? (
             <img
-              src={humanUrl}
-              alt="the person"
-              className="h-8 w-8 rounded-lg border-2 border-[var(--ink)] object-cover"
+              src={size === "lg" ? dog.fullUrl : dog.imageUrl}
+              alt="the matched dog"
+              className="w-full h-full object-cover"
             />
           ) : (
-            <span className="text-2xl">🧑</span>
+            <div className="w-full h-full grid place-items-center text-4xl" aria-hidden="true">
+              🐾
+            </div>
           )}
-          <span className="text-xl" aria-hidden="true">
-            →
-          </span>
-          <span className="text-2xl" aria-hidden="true">
-            🐶
-          </span>
         </div>
+        <span
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-7 w-7 rounded-full border-2 border-[var(--ink)] bg-card grid place-items-center text-sm shadow-pop-sm"
+          aria-hidden="true"
+        >
+          →
+        </span>
+      </div>
+      <div className="p-3">
         {sharedTraits.length > 0 && (
-          <div className="mt-1 text-xs text-muted-foreground italic">
+          <div className="text-xs text-muted-foreground italic">
             {sharedTraits.map((t) => t.label).join(" · ")}
           </div>
         )}

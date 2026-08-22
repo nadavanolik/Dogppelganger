@@ -250,8 +250,10 @@ class UploadJob(Base):
     original_filename = Column(String(255), nullable=False)
     content_type = Column(String(30), nullable=False)
     urgent = Column(Boolean, default=False, nullable=False)
-    # queued -> processing -> done | error
-    status = Column(String(20), default="queued", nullable=False)
+    # queued -> processing -> done | error. Indexed: every worker scans
+    # `WHERE status = 'queued'` on every poll, and that must stay a lookup
+    # rather than a growing full-table scan as the corpus of past jobs grows.
+    status = Column(String(20), default="queued", nullable=False, index=True)
 
     # What we actually stored, measured after re-encoding rather than taken
     # from the multipart headers. `byte_size` is the queue's shortest-job-first

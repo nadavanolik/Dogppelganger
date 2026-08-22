@@ -11,6 +11,11 @@ export default ResultPage;
 function ResultPage() {
   return (
     <AppShell>
+      <div className="max-w-3xl mx-auto mb-4">
+        <Link to="/profile" className="text-sm underline">
+          ← back to profile
+        </Link>
+      </div>
       <Result />
     </AppShell>
   );

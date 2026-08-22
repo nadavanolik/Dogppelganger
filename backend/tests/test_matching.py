@@ -11,6 +11,7 @@ gitignored and CI does not have it.
 """
 import base64
 import time
+from datetime import datetime
 
 import pytest
 from conftest import make_image
@@ -216,6 +217,191 @@ def test_a_queued_upload_ends_up_matched_to_a_dog(client, user, matcher, dog_cor
     assert finished is not None and finished["status"] == "done", finished
     assert finished["dog"]["slug"] in dog_corpus
     assert finished["dog"]["imageUrl"].startswith("/dogs/256/")
+
+
+# --------------------------------------------------------- queue fairness
+#
+# `_select_next` is pure-function-tested directly, on plain unpersisted rows
+# — no client, no DB, no worker pool, because the interesting logic is the
+# scheduling arithmetic (Weighted Start-time Fair Queueing — see queue.py's
+# module docstring), not that the real upload/claim plumbing works, which
+# test_a_queued_upload_ends_up_matched_to_a_dog above already covers.
+
+
+def _job(id, owner_id, *, urgent=False, byte_size=1_000, created_at=None):
+    """An unpersisted UploadJob, just real enough for `_select_next`."""
+    from app.models import UploadJob
+
+    return UploadJob(
+        id=id,
+        owner_id=owner_id,
+        original_filename="x.jpg",
+        content_type="image/jpeg",
+        urgent=urgent,
+        byte_size=byte_size,
+        created_at=created_at or datetime.utcnow(),
+    )
+
+
+def test_a_bulk_owner_cannot_starve_a_single_owner():
+    """The guidelines' explicit fear, verbatim: 'client A doesn't get his
+    single image not processed for a long time because client B sent 100
+    images.'"""
+    from app.uploads import queue
+
+    queue._reset_fairness_state()
+    remaining = [_job(i, owner_id=1) for i in range(100)] + [_job(999, owner_id=2)]
+
+    claimed_owners = []
+    while remaining:
+        job = queue._select_next(remaining)
+        claimed_owners.append(job.owner_id)
+        remaining.remove(job)
+        if job.owner_id == 2:
+            break
+
+    # Owner 2's one job is claimed within the first round, nowhere near the
+    # back of owner 1's 100-deep backlog.
+    assert claimed_owners.index(2) <= 1, claimed_owners[:5]
+
+
+def test_a_long_idle_owner_does_not_steal_the_queue():
+    """An owner who was served once long ago, then went idle while another
+    owner stayed continuously backlogged (and so is legitimately behind now),
+    must not resume with their ancient low clock and cut in front of them —
+    the fix from the SFQ paper (Goyal, Vin & Cheng, 1996)."""
+    from app.uploads import queue
+
+    queue._reset_fairness_state()
+    queue._vt[1] = 10.0  # owner 1's clock, from ages ago
+    queue._vt[2] = 480.0  # owner 2, continuously backlogged, a bit behind
+    queue._global_vt = 500.0  # ...the world has moved on since owner 1's turn
+    queue._backlogged.add(2)  # owner 2 never left the queue; owner 1 did
+
+    remaining = [_job(1, owner_id=1), _job(2, owner_id=2)]  # owner 1 returns
+    picked = queue._select_next(remaining)
+
+    assert picked.owner_id == 2, "the stale clock must not let owner 1 cut ahead of someone already waiting"
+
+
+def test_urgent_gets_a_bounded_head_start_not_an_absolute_one():
+    """Urgent should win against a roughly-tied competitor, but a genuinely
+    far-behind owner still wins regardless — the discount is capped, so
+    marking everything urgent can never starve anyone."""
+    from app.uploads import queue
+
+    queue._reset_fairness_state()
+    tied = [_job(1, owner_id=10, urgent=True), _job(2, owner_id=20, urgent=False)]
+    assert queue._select_next(tied).owner_id == 10, "urgent should win a tied race"
+
+    queue._reset_fairness_state()
+    queue._vt[10] = 100.0  # urgent owner, but just served — caught up
+    queue._vt[20] = 0.0  # ordinary owner, continuously backlogged, way behind
+    queue._global_vt = 100.0
+    queue._backlogged.add(20)  # owner 20 never left the queue; owner 10 is arriving now
+    far_behind = [_job(1, owner_id=10, urgent=True), _job(2, owner_id=20, urgent=False)]
+    assert queue._select_next(far_behind).owner_id == 20, (
+        "a bounded discount must not be enough to cut in front of an owner this far behind"
+    )
+
+
+def test_aging_lets_an_old_large_photo_win_eventually():
+    """Without aging, an owner who keeps adding new small photos could leave
+    an old large photo of their own stuck behind an endless stream of newer,
+    cheaper siblings forever. Aging shrinks a job's effective cost the longer
+    it waits, until even a large photo wins."""
+    from datetime import timedelta
+
+    from app.uploads import queue
+
+    queue._reset_fairness_state()
+    old_big = _job(1, owner_id=1, byte_size=5_000_000, created_at=datetime.utcnow() - timedelta(seconds=120))
+    fresh_small = _job(2, owner_id=1, byte_size=1_000)
+
+    picked = queue._select_next([old_big, fresh_small])
+
+    assert picked.id == old_big.id, "a photo that has waited 2 minutes should now beat a brand-new small one"
+
+
+async def test_the_queue_is_fair_and_scalable_with_fifty_images(client, user_factory, monkeypatch):
+    """The guidelines' explicit ask, run for real: at least 50 images, more
+    than one client, a mocked model with an artificial delay — checking the
+    queue is both fair (nobody starves) and scalable (concurrency actually
+    helps).
+
+    `match_dog` is patched rather than using the `matcher`/`dog_corpus`
+    fixtures: this test is about the queue's scheduling, not the model's
+    arithmetic (test_ml.py's job), and the guidelines explicitly suggest a
+    mock model with a delay to keep a 50-image test cheap to run.
+    """
+    from app.uploads import queue
+
+    # Deliberately larger than real per-job work: real overhead (image
+    # decode/resize/encode at upload time, two SQLite commits per job) is
+    # only a few tens of ms and would otherwise swamp a tiny artificial
+    # delay, making a "did concurrency help" comparison noise-dominated
+    # rather than a real signal.
+    FAKE_DELAY = 0.3
+
+    def fake_match_dog(db, path):
+        time.sleep(FAKE_DELAY)  # the "artificial delay" the guidelines ask for
+        return queue.DogMatchResult(
+            dog_asset_id=1, manifest_index=None, slug="stub", score=0.5, shared_traits=[]
+        )
+
+    monkeypatch.setattr(queue, "match_dog", fake_match_dog)
+    monkeypatch.setattr(queue, "MIN_PROCESS_SECONDS", 0.0)
+    monkeypatch.setattr(queue, "MAX_PROCESS_SECONDS", 0.0)
+    monkeypatch.setattr(queue, "IDLE_POLL_SECONDS", 0.02)
+
+    bulk = user_factory()
+    lonely = user_factory()
+
+    t0 = time.monotonic()
+    bulk_ids: list[int] = []
+    for start in range(0, 49, 20):  # MAX_FILES_PER_REQUEST caps a batch at 20
+        chunk = [
+            ("files", (f"{i}.jpg", make_image(64, 64), "image/jpeg"))
+            for i in range(start, min(start + 20, 49))
+        ]
+        res = _upload(client, bulk, chunk)
+        bulk_ids.extend(j["id"] for j in res.json()["created"])
+    lonely_id = _upload(client, lonely, one_image("only.jpg")).json()["created"][0]["id"]
+    assert len(bulk_ids) + 1 == 50, "at least 50 images overall, per the guidelines"
+
+    # Fairness: the lone client's single photo must not wait behind the bulk
+    # client's whole 49-photo batch just because it arrived alongside them —
+    # nowhere near the ~15s a batch that deep would cost if processed serially.
+    deadline = time.time() + 20
+    lonely_row = None
+    while time.time() < deadline:
+        lonely_row = client.get(f"/api/uploads/{lonely_id}", headers=lonely["headers"]).json()
+        if lonely_row["status"] in ("done", "error"):
+            break
+        time.sleep(0.02)
+    lonely_wait = time.monotonic() - t0
+    assert lonely_row is not None and lonely_row["status"] == "done", lonely_row
+    assert lonely_wait < 5.0, f"the lone client waited {lonely_wait:.2f}s behind a 49-photo batch"
+
+    # Scalability: once all 50 are done, total wall time should reflect real
+    # concurrency. The bound is deliberately generous (not tuned tight to one
+    # machine's overhead) so it holds however many cores WORKER_COUNT ended up
+    # using — it only fails if parallelism provided essentially no benefit.
+    deadline = time.time() + 30
+    rows: list[dict] = []
+    while time.time() < deadline:
+        rows = client.get("/api/uploads", headers=bulk["headers"]).json()
+        if all(r["status"] in ("done", "error") for r in rows):
+            break
+        time.sleep(0.02)
+    assert all(r["status"] == "done" for r in rows), rows
+    total = time.monotonic() - t0
+    serial_estimate = 50 * FAKE_DELAY
+    if queue.WORKER_COUNT > 1:
+        assert total < serial_estimate * 0.85, (
+            f"50 jobs took {total:.2f}s across {queue.WORKER_COUNT} workers — "
+            f"barely faster than doing them one at a time ({serial_estimate:.2f}s)"
+        )
 
 
 def test_a_job_whose_photo_vanished_errors_instead_of_inventing_a_match(dog_corpus, tmp_path):

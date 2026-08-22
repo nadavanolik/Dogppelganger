@@ -124,7 +124,7 @@ function ForumList() {
                   humanSrc={uploadImageUrl(p.image.jobId)}
                   dog={p.image.dog}
                   score={p.image.score}
-                  sharedTraits={p.image.sharedTraits}
+                  showTraits={false}
                 />
               </div>
             )}

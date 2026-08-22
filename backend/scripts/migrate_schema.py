@@ -61,6 +61,13 @@ DROPPED: dict[str, list[str]] = {
     "matches": ["breed_name", "trait", "confidence"],
 }
 
+# (index name, columns). Every worker polls `WHERE status = 'queued'` on
+# every claim (app/uploads/queue.py) — on a VM that has been running a while,
+# that must stay a lookup, not a scan over every job ever finished.
+ADDED_INDEXES: dict[str, list[tuple[str, list[str]]]] = {
+    "upload_jobs": [("ix_upload_jobs_status", ["status"])],
+}
+
 
 def plan(connection) -> list[str]:
     """The DDL this database still needs, in the order it must be applied."""
@@ -83,6 +90,14 @@ def plan(connection) -> list[str]:
         for name in columns:
             if name in present:
                 statements.append(f"ALTER TABLE {table} DROP COLUMN {name}")
+
+    for table, indexes in ADDED_INDEXES.items():
+        if table not in existing_tables:
+            continue
+        present = {ix["name"] for ix in inspector.get_indexes(table)}
+        for name, columns in indexes:
+            if name not in present:
+                statements.append(f"CREATE INDEX {name} ON {table} ({', '.join(columns)})")
 
     return statements
 

@@ -17,12 +17,15 @@ export function MatchPair({
   score,
   sharedTraits = [],
   size = "md",
+  showTraits = true,
 }: {
   humanSrc: string;
   dog: DogRef | null;
   score?: number | null;
   sharedTraits?: SharedTrait[];
   size?: "sm" | "md" | "lg";
+  /** Off in contexts that are about the pairing itself, not why it matched. */
+  showTraits?: boolean;
 }) {
   const box = BOX[size];
   const frame = `${box} object-cover rounded-xl border-2 border-[var(--ink)] shrink-0`;
@@ -54,7 +57,7 @@ export function MatchPair({
         )}
       </div>
 
-      <SharedTraits traits={sharedTraits} />
+      {showTraits && <SharedTraits traits={sharedTraits} />}
     </div>
   );
 }

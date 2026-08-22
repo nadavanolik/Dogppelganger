@@ -200,8 +200,8 @@ function PostDetail() {
                 humanSrc={uploadImageUrl(post.image.jobId)}
                 dog={post.image.dog}
                 score={post.image.score}
-                sharedTraits={post.image.sharedTraits}
                 size="lg"
+                showTraits={false}
               />
             </div>
           )}
